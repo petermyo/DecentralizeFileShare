@@ -10,8 +10,9 @@
  */
 
 // --- Import JWT Library ---
-// UPDATE: Reverted to the 'jose' library for more robust JWT handling.
-import * as jose from 'https://esm.sh/jose@5.3.0';
+// FIX: Use a bare module specifier. The Cloudflare build system will resolve
+// this using the 'package.json' file.
+import * as jose from 'jose';
 
 // --- Constants ---
 const FOLDER_NAME = "Decentralized File Share";
@@ -98,7 +99,7 @@ async function getAuthenticatedUserId(request, env) {
         throw new Response(JSON.stringify({ error: 'Unauthorized. Please log in.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
     try {
-        // UPDATE: Use jose.jwtVerify which handles signature and expiration in one step.
+        // Use jose.jwtVerify which handles signature and expiration in one step.
         const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
         if (!payload || !payload.userId) {
             throw new Error('Invalid token payload.');
@@ -163,7 +164,7 @@ async function handleCallback(request, env) {
         existingHistory.push({ timestamp: new Date().toISOString(), ip: request.headers.get('CF-Connecting-IP') });
         await env.FILE_METADATA.put(loginHistoryKey, JSON.stringify(existingHistory));
 
-        // UPDATE: Use jose.SignJWT for creating the token.
+        // Use jose.SignJWT for creating the token.
         const token = await new jose.SignJWT({ userId, userName })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
@@ -259,7 +260,6 @@ async function handleMe(request, env) {
         return new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
     }
     try {
-        // UPDATE: Use jose.jwtVerify
         const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
         return new Response(JSON.stringify({
             loggedIn: true,
