@@ -10,7 +10,8 @@
  */
 
 // --- Import JWT Library ---
-import jwt from 'https://esm.sh/@tsndr/cloudflare-worker-jwt@2.3.0';
+import jwt from '@tsndr/cloudflare-worker-jwt';
+
 
 // --- Constants ---
 const FOLDER_NAME = "Decentralized File Share";
