@@ -10,7 +10,7 @@
  */
 
 // --- Import JWT Library ---
-// FIX: Use a bare module specifier. The Cloudflare build system will resolve
+// Use a bare module specifier. The Cloudflare build system will resolve
 // this using the 'package.json' file.
 import * as jose from 'jose';
 
@@ -152,7 +152,8 @@ async function handleCallback(request, env) {
         const userId = profile.id;
         const userName = profile.name;
 
-        await env.TOKEN_STORE.put(`user:${userId}`, JSON.stringify({
+        // UPDATE: Use single KV namespace
+        await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
             expires_in: tokens.expires_in,
@@ -160,9 +161,11 @@ async function handleCallback(request, env) {
         }));
 
         const loginHistoryKey = `history:login:${userId}`;
-        const existingHistory = await env.FILE_METADATA.get(loginHistoryKey, { type: 'json' }) || [];
+        // UPDATE: Use single KV namespace
+        const existingHistory = await env.APP_KV.get(loginHistoryKey, { type: 'json' }) || [];
         existingHistory.push({ timestamp: new Date().toISOString(), ip: request.headers.get('CF-Connecting-IP') });
-        await env.FILE_METADATA.put(loginHistoryKey, JSON.stringify(existingHistory));
+        // UPDATE: Use single KV namespace
+        await env.APP_KV.put(loginHistoryKey, JSON.stringify(existingHistory));
 
         // Use jose.SignJWT for creating the token.
         const token = await new jose.SignJWT({ userId, userName })
@@ -188,7 +191,8 @@ async function handleUpload(request, env) {
 
         if (!file) return new Response(JSON.stringify({ error: 'No file uploaded' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
 
-        const tokenData = await env.TOKEN_STORE.get(`user:${userId}`, { type: 'json' });
+        // UPDATE: Use single KV namespace
+        const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
         if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
 
         const accessToken = await getValidAccessToken(tokenData, userId, env);
@@ -222,16 +226,19 @@ async function handleUpload(request, env) {
         const shortCode = Math.random().toString(36).substring(2, 8);
         const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`;
 
-        await env.FILE_METADATA.put(`shorturl:${shortCode}`, uploadedFile.id, { expirationTtl: 60 * 60 * 24 * 30 });
+        // UPDATE: Use single KV namespace
+        await env.APP_KV.put(`shorturl:${shortCode}`, uploadedFile.id, { expirationTtl: 60 * 60 * 24 * 30 });
 
         const fileMeta = {
             fileId: uploadedFile.id, fileName: newFileName, originalName: file.name,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
         };
         const historyKey = `history:upload:${userId}`;
-        const existingHistory = await env.FILE_METADATA.get(historyKey, { type: 'json' }) || [];
+        // UPDATE: Use single KV namespace
+        const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         existingHistory.push(fileMeta);
-        await env.FILE_METADATA.put(historyKey, JSON.stringify(existingHistory));
+        // UPDATE: Use single KV namespace
+        await env.APP_KV.put(historyKey, JSON.stringify(existingHistory));
 
         return new Response(JSON.stringify({ shortUrl }), { headers: { 'Content-Type': 'application/json' } });
     } catch (err) {
@@ -245,7 +252,8 @@ async function handleShortUrl(request, env) {
     const url = new URL(request.url);
     const shortCode = url.pathname.split('/s/')[1];
     if (shortCode) {
-        const fileId = await env.FILE_METADATA.get(`shorturl:${shortCode}`);
+        // UPDATE: Use single KV namespace
+        const fileId = await env.APP_KV.get(`shorturl:${shortCode}`);
         if (fileId) {
             const googleDriveUrl = `https://drive.google.com/file/d/${fileId}/view`;
             return Response.redirect(googleDriveUrl, 302);
@@ -299,7 +307,8 @@ async function getValidAccessToken(tokenData, userId, env) {
     });
     const newTokens = await refreshResponse.json();
     if (newTokens.error) throw new Error('Failed to refresh Google token.');
-    await env.TOKEN_STORE.put(`user:${userId}`, JSON.stringify({
+    // UPDATE: Use single KV namespace
+    await env.APP_KV.put(`user:${userId}`, JSON.stringify({
         ...tokenData,
         access_token: newTokens.access_token,
         expires_in: newTokens.expires_in,
