@@ -10,8 +10,8 @@
  */
 
 // --- Import JWT Library ---
-import jwt from '@tsndr/cloudflare-worker-jwt';
-
+// UPDATE: Reverted to the 'jose' library for more robust JWT handling.
+import * as jose from 'https://esm.sh/jose@5.3.0';
 
 // --- Constants ---
 const FOLDER_NAME = "Decentralized File Share";
@@ -72,6 +72,8 @@ async function handleApiRequest(request, env) {
 }
 
 // --- JWT & Cookie Helpers ---
+const getJwtSecret = (env) => new TextEncoder().encode(env.JWT_SECRET);
+
 function getCookie(request, name) {
     const cookieHeader = request.headers.get('Cookie');
     if (!cookieHeader) return null;
@@ -96,11 +98,11 @@ async function getAuthenticatedUserId(request, env) {
         throw new Response(JSON.stringify({ error: 'Unauthorized. Please log in.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
     try {
-        const isValid = await jwt.verify(token, env.JWT_SECRET);
-        if (!isValid) throw new Error('Invalid token signature.');
-        const { payload } = jwt.decode(token);
-        if (!payload || !payload.userId) throw new Error('Invalid token payload.');
-        if (payload.exp && Date.now() / 1000 > payload.exp) throw new Error('Token expired.');
+        // UPDATE: Use jose.jwtVerify which handles signature and expiration in one step.
+        const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
+        if (!payload || !payload.userId) {
+            throw new Error('Invalid token payload.');
+        }
         return payload.userId;
     } catch (err) {
         const response = new Response(JSON.stringify({ error: 'Invalid or expired token. Please log in again.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
@@ -161,11 +163,12 @@ async function handleCallback(request, env) {
         existingHistory.push({ timestamp: new Date().toISOString(), ip: request.headers.get('CF-Connecting-IP') });
         await env.FILE_METADATA.put(loginHistoryKey, JSON.stringify(existingHistory));
 
-        const token = await jwt.sign({
-            userId,
-            userName,
-            exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24),
-        }, env.JWT_SECRET);
+        // UPDATE: Use jose.SignJWT for creating the token.
+        const token = await new jose.SignJWT({ userId, userName })
+            .setProtectedHeader({ alg: 'HS256' })
+            .setIssuedAt()
+            .setExpirationTime('24h')
+            .sign(await getJwtSecret(env));
 
         const response = Response.redirect(url.origin, 302);
         response.headers.set('Set-Cookie', createCookieHeader('auth_token', token));
@@ -256,11 +259,8 @@ async function handleMe(request, env) {
         return new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
     }
     try {
-        const isValid = await jwt.verify(token, env.JWT_SECRET);
-        if (!isValid) throw new Error('Invalid signature');
-        const { payload } = jwt.decode(token);
-        if (payload.exp && Date.now() / 1000 > payload.exp) throw new Error('Token expired');
-
+        // UPDATE: Use jose.jwtVerify
+        const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
         return new Response(JSON.stringify({
             loggedIn: true,
             userId: payload.userId,
