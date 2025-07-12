@@ -20,7 +20,8 @@ const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 
 // --- Main Handler for all /api/* requests ---
-export const onRequest: PagesFunction<Env> = async (context) => {
+// FIX: Removed TypeScript type annotations to make it valid JavaScript.
+export const onRequest = async (context) => {
     const { request, env } = context;
     const url = new URL(request.url);
     const path = url.pathname;
