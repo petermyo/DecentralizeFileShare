@@ -1,16 +1,16 @@
 /**
  * =================================================================================
- * Cloudflare Pages Function: Backend API
- * File Path: /functions/api/_middleware.js
+ * Cloudflare Pages Function: Top-Level Middleware
+ * File Path: /functions/_middleware.js
  * =================================================================================
  *
- * This file handles all API requests. It's the server-side part of your application.
+ * This single file acts as the main router for the entire application.
+ * It handles API requests, short URL redirects, and serves the frontend.
  *
  */
 
 // --- Import JWT Library ---
-// When deployed on Cloudflare Pages, the build system will resolve this dependency.
-import jwt from '@tsndr/cloudflare-worker-jwt';
+import jwt from 'https://esm.sh/@tsndr/cloudflare-worker-jwt@2.3.0';
 
 // --- Constants ---
 const FOLDER_NAME = "Decentralized File Share";
@@ -19,28 +19,55 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 
-// --- Main Handler for all /api/* requests ---
-// FIX: Removed TypeScript type annotations to make it valid JavaScript.
+/**
+ * Main request handler. This function is the entry point for all requests.
+ */
 export const onRequest = async (context) => {
-    const { request, env } = context;
+    const { request, env, next } = context;
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Simple router logic
-    if (path === '/api/auth/google/login' && request.method === 'GET') {
-        return handleLogin(request, env);
+    // Route API requests
+    if (path.startsWith('/api/')) {
+        return handleApiRequest(request, env);
     }
-    if (path === '/api/auth/google/callback' && request.method === 'GET') {
-        return handleCallback(request, env);
-    }
-    if (path === '/api/upload' && request.method === 'POST') {
-        return handleUpload(request, env);
-    }
-     if (path.startsWith('/api/s/')) {
+
+    // Route short URL redirects
+    if (path.startsWith('/s/')) {
         return handleShortUrl(request, env);
     }
 
-    return new Response('API route not found', { status: 404 });
+    // For all other requests, pass through to the static asset handler (serves the frontend)
+    return next();
+}
+
+/**
+ * Handles all requests prefixed with /api/
+ */
+async function handleApiRequest(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+
+    // API router logic
+    switch (path) {
+        case '/api/auth/google/login':
+            if (request.method === 'GET') return handleLogin(request, env);
+            break;
+        case '/api/auth/google/callback':
+            if (request.method === 'GET') return handleCallback(request, env);
+            break;
+        case '/api/upload':
+            if (request.method === 'POST') return handleUpload(request, env);
+            break;
+        case '/api/me':
+            if (request.method === 'GET') return handleMe(request, env);
+            break;
+        case '/api/logout':
+            if (request.method === 'POST') return handleLogout(request);
+            break;
+    }
+
+    return new Response('API route not found or method not allowed', { status: 404 });
 }
 
 // --- JWT & Cookie Helpers ---
@@ -65,7 +92,7 @@ function createCookieHeader(name, value, options = {}) {
 async function getAuthenticatedUserId(request, env) {
     const token = getCookie(request, 'auth_token');
     if (!token) {
-        return new Response(JSON.stringify({ error: 'Unauthorized. Please log in.' }), { status: 401 });
+        throw new Response(JSON.stringify({ error: 'Unauthorized. Please log in.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
     try {
         const isValid = await jwt.verify(token, env.JWT_SECRET);
@@ -75,7 +102,7 @@ async function getAuthenticatedUserId(request, env) {
         if (payload.exp && Date.now() / 1000 > payload.exp) throw new Error('Token expired.');
         return payload.userId;
     } catch (err) {
-        const response = new Response(JSON.stringify({ error: 'Invalid or expired token. Please log in again.' }), { status: 401 });
+        const response = new Response(JSON.stringify({ error: 'Invalid or expired token. Please log in again.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
         response.headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
         throw response;
     }
@@ -154,10 +181,10 @@ async function handleUpload(request, env) {
         const formData = await request.formData();
         const file = formData.get('file');
 
-        if (!file) return new Response(JSON.stringify({ error: 'No file uploaded' }), { status: 400 });
+        if (!file) return new Response(JSON.stringify({ error: 'No file uploaded' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
 
         const tokenData = await env.TOKEN_STORE.get(`user:${userId}`, { type: 'json' });
-        if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401 });
+        if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
 
         const accessToken = await getValidAccessToken(tokenData, userId, env);
         const folderId = await findOrCreateFolder(accessToken, env);
@@ -205,7 +232,7 @@ async function handleUpload(request, env) {
     } catch (err) {
         if (err instanceof Response) return err;
         console.error('Upload error:', err.message);
-        return new Response(JSON.stringify({ error: 'Failed to upload file.', details: err.message }), { status: 500 });
+        return new Response(JSON.stringify({ error: 'Failed to upload file.', details: err.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
     }
 }
 
@@ -220,6 +247,36 @@ async function handleShortUrl(request, env) {
         }
     }
     return new Response('URL not found or expired', { status: 404 });
+}
+
+async function handleMe(request, env) {
+    const token = getCookie(request, 'auth_token');
+    if (!token) {
+        return new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
+    }
+    try {
+        const isValid = await jwt.verify(token, env.JWT_SECRET);
+        if (!isValid) throw new Error('Invalid signature');
+        const { payload } = jwt.decode(token);
+        if (payload.exp && Date.now() / 1000 > payload.exp) throw new Error('Token expired');
+
+        return new Response(JSON.stringify({
+            loggedIn: true,
+            userId: payload.userId,
+            userName: payload.userName,
+        }), { headers: { 'Content-Type': 'application/json' } });
+
+    } catch (err) {
+        const response = new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
+        response.headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
+        return response;
+    }
+}
+
+function handleLogout(request) {
+    const response = new Response(JSON.stringify({ success: true, message: 'Logged out successfully.' }), { headers: { 'Content-Type': 'application/json' } });
+    response.headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
+    return response;
 }
 
 
