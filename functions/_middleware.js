@@ -4,8 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version implements a secure, private download model with passcode
- * and expiration date support.
+ * This version implements a secure, private download model with passcode,
+ * expiration date support, and a file deletion endpoint.
  *
  */
 
@@ -34,7 +34,6 @@ export const onRequest = async (context) => {
 
     // Route short URL redirects
     if (path.startsWith('/s/')) {
-        // UPDATE: Handle both GET and POST for passcode submission
         if (request.method === 'GET') {
             return handleShortUrlGet(request, env);
         }
@@ -71,10 +70,13 @@ async function handleApiRequest(request, env) {
         case '/api/logout':
             if (request.method === 'POST') return handleLogout(request);
             break;
-        // UPDATE: New endpoint to get file history
         case '/api/files':
              if (request.method === 'GET') return getFileHistory(request, env);
              break;
+        // UPDATE: New endpoint to handle file deletion
+        case '/api/delete':
+            if (request.method === 'POST') return handleDelete(request, env);
+            break;
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
@@ -234,7 +236,6 @@ async function handleUpload(request, env) {
         const shortCode = Math.random().toString(36).substring(2, 8);
         const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`;
 
-        // UPDATE: Store passcode and expiration date
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify({
             id: uploadedFile.id,
             name: newFileName,
@@ -262,7 +263,6 @@ async function handleUpload(request, env) {
     }
 }
 
-// UPDATE: Renamed to handle GET requests for the shortlink
 async function handleShortUrlGet(request, env) {
     const url = new URL(request.url);
     const shortCode = url.pathname.split('/s/')[1];
@@ -271,21 +271,17 @@ async function handleShortUrlGet(request, env) {
     const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
     if (!fileData) return new Response('URL not found or expired', { status: 404 });
 
-    // Check for expiration
     if (fileData.expireDate && new Date(fileData.expireDate) < new Date()) {
         return new Response('This link has expired.', { status: 403 });
     }
 
-    // Check for passcode
     if (fileData.passcode) {
         return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
     }
 
-    // If no passcode, proceed to download
     return streamFile(fileData, env);
 }
 
-// UPDATE: New handler for POST requests (passcode submission)
 async function handleShortUrlPost(request, env) {
     const url = new URL(request.url);
     const shortCode = url.pathname.split('/s/')[1];
@@ -303,7 +299,6 @@ async function handleShortUrlPost(request, env) {
         return new Response(getPasscodePage(shortCode, fileData.name, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
 }
-
 
 async function handleMe(request, env) {
     const token = getCookie(request, 'auth_token');
@@ -333,7 +328,6 @@ function handleLogout(request) {
     return new Response(responseBody, { headers });
 }
 
-// UPDATE: New handler to get file history
 async function getFileHistory(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
@@ -343,6 +337,50 @@ async function getFileHistory(request, env) {
     } catch (err) {
         if (err instanceof Response) return err;
         return new Response(JSON.stringify({ error: "Could not fetch file history." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+}
+
+// UPDATE: New handler for file deletion
+async function handleDelete(request, env) {
+    try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const { fileId, shortUrl } = await request.json();
+
+        if (!fileId || !shortUrl) {
+            return new Response(JSON.stringify({ error: "Missing fileId or shortUrl" }), { status: 400 });
+        }
+
+        // 1. Delete from Google Drive
+        const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
+        if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401 });
+        const accessToken = await getValidAccessToken(tokenData, userId, env);
+
+        const deleteResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+
+        // We can proceed even if the file is already gone from Drive (status 404)
+        if (!deleteResponse.ok && deleteResponse.status !== 404) {
+            throw new Error('Failed to delete file from Google Drive.');
+        }
+
+        // 2. Delete from KV
+        const shortCode = shortUrl.split('/s/')[1];
+        await env.APP_KV.delete(`shorturl:${shortCode}`);
+
+        // 3. Update history in KV
+        const historyKey = `history:upload:${userId}`;
+        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const updatedHistory = fileHistory.filter(file => file.fileId !== fileId);
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true, message: 'File deleted successfully.' }), { status: 200 });
+
+    } catch (err) {
+        if (err instanceof Response) return err;
+        console.error('Delete error:', err.message);
+        return new Response(JSON.stringify({ error: 'Failed to delete file.', details: err.message }), { status: 500 });
     }
 }
 
@@ -392,7 +430,6 @@ async function findOrCreateFolder(accessToken, env) {
     return newFolder.id;
 }
 
-// UPDATE: New helper to stream the file
 async function streamFile(fileData, env) {
     try {
         const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
@@ -420,7 +457,6 @@ async function streamFile(fileData, env) {
     }
 }
 
-// UPDATE: New helper to generate the passcode entry page
 function getPasscodePage(shortCode, fileName, hasError = false) {
     const errorMessage = hasError ? `<p class="text-red-500 text-sm mb-4">Incorrect passcode. Please try again.</p>` : '';
     return `

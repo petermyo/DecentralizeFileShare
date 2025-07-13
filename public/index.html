@@ -12,10 +12,7 @@
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
-        .progress-bar {
-            background: linear-gradient(to right, #3498db, #2980b9);
-            transition: width 0.3s ease-in-out;
-        }
+        /* Removed the separate progress-bar style as it's now integrated into the button */
     </style>
      <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -51,20 +48,21 @@
             }, []);
             
             // --- Fetch File History on Login ---
-            useEffect(() => {
+            const fetchFiles = useCallback(async () => {
                 if (user) {
-                    const fetchFiles = async () => {
-                        try {
-                            const response = await fetch('/api/files');
-                            const data = await response.json();
-                            setFiles(data);
-                        } catch (err) {
-                            console.error("Failed to fetch files:", err);
-                        }
-                    };
-                    fetchFiles();
+                    try {
+                        const response = await fetch('/api/files');
+                        const data = await response.json();
+                        setFiles(data);
+                    } catch (err) {
+                        console.error("Failed to fetch files:", err);
+                    }
                 }
             }, [user]);
+
+            useEffect(() => {
+                fetchFiles();
+            }, [fetchFiles]);
 
             const handleLogout = async () => {
                 await fetch('/api/logout', { method: 'POST' });
@@ -74,6 +72,10 @@
             
             const addFileToList = (newFile) => {
                 setFiles(prevFiles => [newFile, ...prevFiles]);
+            }
+            
+            const handleFileDelete = (fileId) => {
+                setFiles(prevFiles => prevFiles.filter(file => file.fileId !== fileId));
             }
 
             // --- Render Logic ---
@@ -100,7 +102,7 @@
                     
                     <main className="p-4 md:p-8">
                         {user ? (
-                            <MainLayout files={files} addFileToList={addFileToList} />
+                            <MainLayout files={files} addFileToList={addFileToList} onFileDelete={handleFileDelete} />
                         ) : (
                             <LoginScreen />
                         )}
@@ -122,13 +124,13 @@
             </div>
         );
         
-        const MainLayout = ({ files, addFileToList }) => (
+        const MainLayout = ({ files, addFileToList, onFileDelete }) => (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
                 <div className="lg:col-span-1">
                     <UploadForm addFileToList={addFileToList} />
                 </div>
                 <div className="lg:col-span-2">
-                    <FileTable files={files} />
+                    <FileTable files={files} onFileDelete={onFileDelete} />
                 </div>
             </div>
         );
@@ -183,7 +185,6 @@
                 if (passcode) formData.append('passcode', passcode);
                 if (expireDate) formData.append('expireDate', expireDate);
 
-                // Simulate progress for better UX as we can't track server upload directly
                 const progressInterval = setInterval(() => {
                     setProgress(oldProgress => {
                         if (oldProgress >= 95) {
@@ -196,16 +197,23 @@
 
                 try {
                     const response = await fetch('/api/upload', { method: 'POST', body: formData });
+                    
+                    const contentType = response.headers.get("content-type");
+                    if (!response.ok || !contentType || !contentType.includes("application/json")) {
+                        throw new Error('Server timed out processing the large file. Please check your file history; the upload may have succeeded despite this error.');
+                    }
+                    
                     const result = await response.json();
-                    if (!response.ok) throw new Error(result.error || 'Upload failed.');
+                    if (result.error) throw new Error(result.error);
                     
                     setProgress(100);
                     addFileToList({
+                        fileId: result.fileId,
                         fileName: selectedFile.name,
                         shortUrl: result.shortUrl,
                         hasPasscode: !!passcode,
                         expireDate: expireDate,
-                        uploadTimestamp: new Date().toISOString() // Add timestamp for sorting
+                        uploadTimestamp: new Date().toISOString()
                     });
                     // Reset form
                     setSelectedFile(null);
@@ -255,29 +263,50 @@
                             <input type="date" value={expireDate} onChange={e => setExpireDate(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"/>
                         </div>
                         
-                        {isUploading && (
-                             <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                <div className="bg-blue-500 h-2.5 rounded-full progress-bar" style={{width: `${progress}%`}}></div>
-                            </div>
-                        )}
-                        
-                        {error && <p className="text-sm text-red-600">{error}</p>}
+                        {error && <p className="text-sm text-red-600 p-2 bg-red-100 rounded-md">{error}</p>}
 
-                        <button type="submit" disabled={isUploading || !selectedFile} className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400">
-                            {isUploading ? 'Uploading...' : 'Upload & Get Link'}
+                        {/* UPDATE: This button now shows the progress */}
+                        <button 
+                            type="submit" 
+                            disabled={isUploading || !selectedFile} 
+                            style={isUploading ? {
+                                background: `linear-gradient(to right, #3b82f6 ${progress}%, #9ca3af ${progress}%)`,
+                                transition: 'background 0.3s ease'
+                            } : {}}
+                            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-gray-400 disabled:text-gray-200"
+                        >
+                            {isUploading ? `Uploading... ${progress}%` : 'Upload & Get Link'}
                         </button>
                     </form>
                 </div>
             );
         }
         
-        const FileTable = ({ files }) => {
+        const FileTable = ({ files, onFileDelete }) => {
             const [copySuccess, setCopySuccess] = useState('');
 
             const handleCopy = (url) => {
                 navigator.clipboard.writeText(url);
                 setCopySuccess(url);
                 setTimeout(() => setCopySuccess(''), 2000);
+            };
+            
+            const handleDeleteClick = async (file) => {
+                if (window.confirm(`Are you sure you want to delete "${file.fileName}"? This action cannot be undone.`)) {
+                    try {
+                         const response = await fetch('/api/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ fileId: file.fileId, shortUrl: file.shortUrl })
+                        });
+                        if (!response.ok) {
+                            throw new Error('Failed to delete the file.');
+                        }
+                        onFileDelete(file.fileId);
+                    } catch (err) {
+                        alert(err.message);
+                    }
+                }
             };
 
             if (files.length === 0) {
@@ -300,11 +329,12 @@
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Link</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expires</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Protection</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {files.map((file, index) => (
-                                    <tr key={index}>
+                                    <tr key={file.fileId || index}>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">{file.fileName}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             <button onClick={() => handleCopy(file.shortUrl)} className="text-blue-600 hover:text-blue-800">
@@ -316,6 +346,9 @@
                                             {file.hasPasscode ? 
                                                 <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Passcode</span> : 
                                                 <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">None</span>}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            <button onClick={() => handleDeleteClick(file)} className="text-red-600 hover:text-red-800">Delete</button>
                                         </td>
                                     </tr>
                                 ))}
