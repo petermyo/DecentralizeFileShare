@@ -1,11 +1,12 @@
 /**
  * =================================================================================
  * Cloudflare Pages Function: Top-Level Middleware
- * File Path: /functions/_middleware.js
+ * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
  * This single file acts as the main router for the entire application.
- * It handles API requests, short URL redirects, and serves the frontend.
+ * By placing it at the root of the 'functions' directory, it can intercept
+ * all requests, including API calls and shortlink redirects.
  *
  */
 
@@ -256,10 +257,7 @@ async function handleShortUrl(request, env) {
     const shortCode = url.pathname.split('/s/')[1];
     if (shortCode) {
         const fileId = await env.APP_KV.get(`shorturl:${shortCode}`);
-        console.log("fileId", fileId);
-        
         if (fileId) {
-            // UPDATE: Changed the URL to a direct download link.
             const googleDriveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
             return Response.redirect(googleDriveDownloadUrl, 302);
         }
