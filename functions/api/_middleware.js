@@ -217,11 +217,18 @@ async function handleUpload(request, env) {
         const uploadedFile = await uploadRes.json();
         if (uploadedFile.error) throw new Error(`Google API Error: ${uploadedFile.error.message}`);
 
-        await fetch(`${GOOGLE_DRIVE_API}/files/${uploadedFile.id}/permissions`, {
+        // UPDATE: Add error checking for the permission setting call.
+        const permissionRes = await fetch(`${GOOGLE_DRIVE_API}/files/${uploadedFile.id}/permissions`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ role: 'reader', type: 'anyone' }),
         });
+        
+        if (!permissionRes.ok) {
+            const errorBody = await permissionRes.json();
+            console.error("Failed to set file permissions:", JSON.stringify(errorBody));
+            throw new Error('File uploaded, but failed to make it public.');
+        }
 
         const shortCode = Math.random().toString(36).substring(2, 8);
         const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`;
@@ -251,9 +258,9 @@ async function handleShortUrl(request, env) {
     if (shortCode) {
         const fileId = await env.APP_KV.get(`shorturl:${shortCode}`);
         if (fileId) {
-            // UPDATE: Changed the URL to a direct download link.
-            const googleDriveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-            return Response.redirect(googleDriveDownloadUrl, 302);
+            // UPDATE: Changed the URL to the Google Drive viewer for reliability.
+            const googleDriveViewUrl = `https://drive.google.com/file/d/${fileId}/view`;
+            return Response.redirect(googleDriveViewUrl, 302);
         }
     }
     return new Response('URL not found or expired', { status: 404 });
