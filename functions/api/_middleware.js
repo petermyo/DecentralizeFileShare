@@ -251,8 +251,9 @@ async function handleShortUrl(request, env) {
     if (shortCode) {
         const fileId = await env.APP_KV.get(`shorturl:${shortCode}`);
         if (fileId) {
-            const googleDriveUrl = `https://drive.google.com/file/d/${fileId}/view`;
-            return Response.redirect(googleDriveUrl, 302);
+            // UPDATE: Changed the URL to a direct download link.
+            const googleDriveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+            return Response.redirect(googleDriveDownloadUrl, 302);
         }
     }
     return new Response('URL not found or expired', { status: 404 });
