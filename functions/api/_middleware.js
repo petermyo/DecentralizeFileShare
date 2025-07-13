@@ -256,6 +256,7 @@ async function handleShortUrl(request, env) {
     const shortCode = url.pathname.split('/s/')[1];
     if (shortCode) {
         const fileId = await env.APP_KV.get(`shorturl:${shortCode}`);
+        console.log("fileId", fileId);
         if (fileId) {
             // UPDATE: Changed the URL to a direct download link.
             const googleDriveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
