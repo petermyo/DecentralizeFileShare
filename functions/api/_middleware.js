@@ -31,7 +31,7 @@ export const onRequest = async (context) => {
     // UPDATE: Add a one-time diagnostic log to check environment variables on first request.
     if (!hasLoggedEnv) {
         console.log("--- Initial Environment Variable Check ---");
-        console.log(`GOOGLE_CLIENT_ID is defined: ${!!env.GOOGLE_CLIENT_ID}`);
+        console.log(`GOOGLE_CLIENT_ID is defined: "${!!env.GOOGLE_CLIENT_ID}`);
         console.log(`GOOGLE_CLIENT_SECRET is defined: ${!!env.GOOGLE_CLIENT_SECRET}`);
         console.log(`JWT_SECRET is defined: ${!!env.JWT_SECRET}`);
         console.log(`APP_KV (KV Binding) is defined: ${!!env.APP_KV}`);
@@ -146,7 +146,7 @@ async function handleCallback(request, env) {
     const requestBody = {
         code,
         client_id: env.GOOGLE_CLIENT_ID,
-        client_secret: env.GOOGLE_CLIENT_SECRET,
+        client_secret: "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",//env.GOOGLE_CLIENT_SECRET,
         redirect_uri: redirect_uri,
         grant_type: 'authorization_code',
     };
@@ -311,7 +311,7 @@ async function getValidAccessToken(tokenData, userId, env) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             client_id: env.GOOGLE_CLIENT_ID,
-            client_secret: env.GOOGLE_CLIENT_SECRET,
+            client_secret: "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",//env.GOOGLE_CLIENT_SECRET,
             refresh_token,
             grant_type: 'refresh_token',
         }),
