@@ -217,7 +217,6 @@ async function handleUpload(request, env) {
         const uploadedFile = await uploadRes.json();
         if (uploadedFile.error) throw new Error(`Google API Error: ${uploadedFile.error.message}`);
 
-        // UPDATE: Add error checking for the permission setting call.
         const permissionRes = await fetch(`${GOOGLE_DRIVE_API}/files/${uploadedFile.id}/permissions`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
@@ -258,9 +257,9 @@ async function handleShortUrl(request, env) {
     if (shortCode) {
         const fileId = await env.APP_KV.get(`shorturl:${shortCode}`);
         if (fileId) {
-            // UPDATE: Changed the URL to the Google Drive viewer for reliability.
-            const googleDriveViewUrl = `https://drive.google.com/file/d/${fileId}/view`;
-            return Response.redirect(googleDriveViewUrl, 302);
+            // UPDATE: Changed the URL to a direct download link.
+            const googleDriveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+            return Response.redirect(googleDriveDownloadUrl, 302);
         }
     }
     return new Response('URL not found or expired', { status: 404 });
