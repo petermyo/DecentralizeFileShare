@@ -19,11 +19,26 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 
+// --- Diagnostic Logging Flag ---
+let hasLoggedEnv = false;
+
 /**
  * Main request handler. This function is the entry point for all requests.
  */
 export const onRequest = async (context) => {
     const { request, env, next } = context;
+
+    // UPDATE: Add a one-time diagnostic log to check environment variables on first request.
+    if (!hasLoggedEnv) {
+        console.log("--- Initial Environment Variable Check ---");
+        console.log(`GOOGLE_CLIENT_ID is defined: ${!!env.GOOGLE_CLIENT_ID}`);
+        console.log(`GOOGLE_CLIENT_SECRET is defined: ${!!env.GOOGLE_CLIENT_SECRET}`);
+        console.log(`JWT_SECRET is defined: ${!!env.JWT_SECRET}`);
+        console.log(`APP_KV (KV Binding) is defined: ${!!env.APP_KV}`);
+        console.log("-----------------------------------------");
+        hasLoggedEnv = true;
+    }
+
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -127,20 +142,23 @@ async function handleCallback(request, env) {
     const code = url.searchParams.get('code');
     if (!code) return new Response('Authorization code not found.', { status: 400 });
 
+    const redirect_uri = `${url.origin}/api/auth/google/callback`;
+    const requestBody = {
+        code,
+        client_id: env.GOOGLE_CLIENT_ID,
+        client_secret: env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: redirect_uri,
+        grant_type: 'authorization_code',
+    };
+
     try {
         const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                code,
-                client_id: env.GOOGLE_CLIENT_ID,
-                client_secret: env.GOOGLE_CLIENT_SECRET,
-                redirect_uri: `${url.origin}/api/auth/google/callback`,
-                grant_type: 'authorization_code',
-            }),
+            body: JSON.stringify(requestBody),
         });
         const tokens = await tokenResponse.json();
-        if (tokens.error) throw new Error(`Google token error: ${tokens.error_description}`);
+        if (tokens.error) throw new Error(`Google token error: ${tokens.error_description || 'Bad Request'}`);
 
         const profileResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
             headers: { 'Authorization': `Bearer ${tokens.access_token}` }
@@ -161,11 +179,9 @@ async function handleCallback(request, env) {
         existingHistory.push({ timestamp: new Date().toISOString(), ip: request.headers.get('CF-Connecting-IP') });
         await env.APP_KV.put(loginHistoryKey, JSON.stringify(existingHistory));
 
-        // UPDATE: Add diagnostic logging and a check for the JWT_SECRET
-        console.log(`Checking JWT_SECRET... Is it defined? ${!!env.JWT_SECRET}`);
-        if (!env.JWT_SECRET || env.JWT_SECRET.length < 10) {
-            console.error('FATAL: JWT_SECRET environment variable is not set or is too short.');
-            throw new Error('Server configuration error: JWT secret is missing.');
+        if (!env.JWT_SECRET) {
+             console.error('FATAL: JWT_SECRET environment variable is not set.');
+             throw new Error('Server configuration error: JWT secret is missing.');
         }
 
         const token = await new jose.SignJWT({ userId, userName })
