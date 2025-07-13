@@ -4,9 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This single file acts as the main router for the entire application.
- * By placing it at the root of the 'functions' directory, it can intercept
- * all requests, including API calls and shortlink redirects.
+ * This version implements a secure, private download model with passcode
+ * and expiration date support.
  *
  */
 
@@ -35,7 +34,13 @@ export const onRequest = async (context) => {
 
     // Route short URL redirects
     if (path.startsWith('/s/')) {
-        return handleShortUrl(request, env);
+        // UPDATE: Handle both GET and POST for passcode submission
+        if (request.method === 'GET') {
+            return handleShortUrlGet(request, env);
+        }
+        if (request.method === 'POST') {
+            return handleShortUrlPost(request, env);
+        }
     }
 
     // For all other requests, pass through to the static asset handler (serves the frontend)
@@ -66,6 +71,10 @@ async function handleApiRequest(request, env) {
         case '/api/logout':
             if (request.method === 'POST') return handleLogout(request);
             break;
+        // UPDATE: New endpoint to get file history
+        case '/api/files':
+             if (request.method === 'GET') return getFileHistory(request, env);
+             break;
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
@@ -190,6 +199,8 @@ async function handleUpload(request, env) {
         const userId = await getAuthenticatedUserId(request, env);
         const formData = await request.formData();
         const file = formData.get('file');
+        const passcode = formData.get('passcode') || null;
+        const expireDate = formData.get('expireDate') || null;
 
         if (!file) return new Response(JSON.stringify({ error: 'No file uploaded' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
 
@@ -199,8 +210,10 @@ async function handleUpload(request, env) {
         const accessToken = await getValidAccessToken(tokenData, userId, env);
         const folderId = await findOrCreateFolder(accessToken, env);
 
-        const date = new Date().toLocaleDateString('en-GB').replace(/\//g, '-');
-        const newFileName = `${file.name}_${date}`;
+        const now = new Date();
+        const date = now.toLocaleDateString('en-GB').replace(/\//g, '-'); // DD-MM-YYYY
+        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-'); // HH-MM-SS
+        const newFileName = `${file.name}_${date}_${time}`;
 
         const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
             method: 'POST',
@@ -218,26 +231,23 @@ async function handleUpload(request, env) {
         const uploadedFile = await uploadRes.json();
         if (uploadedFile.error) throw new Error(`Google API Error: ${uploadedFile.error.message}`);
 
-        const permissionRes = await fetch(`${GOOGLE_DRIVE_API}/files/${uploadedFile.id}/permissions`, {
-            method: 'POST',
-            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ role: 'reader', type: 'anyone' }),
-        });
-        
-        if (!permissionRes.ok) {
-            const errorBody = await permissionRes.json();
-            console.error("Failed to set file permissions:", JSON.stringify(errorBody));
-            throw new Error('File uploaded, but failed to make it public.');
-        }
-
         const shortCode = Math.random().toString(36).substring(2, 8);
         const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`;
 
-        await env.APP_KV.put(`shorturl:${shortCode}`, uploadedFile.id, { expirationTtl: 60 * 60 * 24 * 30 });
+        // UPDATE: Store passcode and expiration date
+        await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify({
+            id: uploadedFile.id,
+            name: newFileName,
+            ownerId: userId,
+            passcode: passcode,
+            expireDate: expireDate
+        }), { expirationTtl: 60 * 60 * 24 * 30 });
 
         const fileMeta = {
             fileId: uploadedFile.id, fileName: newFileName, originalName: file.name,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
+            hasPasscode: !!passcode,
+            expireDate: expireDate
         };
         const historyKey = `history:upload:${userId}`;
         const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
@@ -252,18 +262,48 @@ async function handleUpload(request, env) {
     }
 }
 
-async function handleShortUrl(request, env) {
+// UPDATE: Renamed to handle GET requests for the shortlink
+async function handleShortUrlGet(request, env) {
     const url = new URL(request.url);
     const shortCode = url.pathname.split('/s/')[1];
-    if (shortCode) {
-        const fileId = await env.APP_KV.get(`shorturl:${shortCode}`);
-        if (fileId) {
-            const googleDriveDownloadUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
-            return Response.redirect(googleDriveDownloadUrl, 302);
-        }
+    if (!shortCode) return new Response('Invalid URL', { status: 400 });
+
+    const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+    if (!fileData) return new Response('URL not found or expired', { status: 404 });
+
+    // Check for expiration
+    if (fileData.expireDate && new Date(fileData.expireDate) < new Date()) {
+        return new Response('This link has expired.', { status: 403 });
     }
-    return new Response('URL not found or expired', { status: 404 });
+
+    // Check for passcode
+    if (fileData.passcode) {
+        return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
+    }
+
+    // If no passcode, proceed to download
+    return streamFile(fileData, env);
 }
+
+// UPDATE: New handler for POST requests (passcode submission)
+async function handleShortUrlPost(request, env) {
+    const url = new URL(request.url);
+    const shortCode = url.pathname.split('/s/')[1];
+    if (!shortCode) return new Response('Invalid URL', { status: 400 });
+
+    const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+    if (!fileData) return new Response('URL not found or expired', { status: 404 });
+
+    const formData = await request.formData();
+    const submittedPasscode = formData.get('passcode');
+
+    if (fileData.passcode && submittedPasscode === fileData.passcode) {
+        return streamFile(fileData, env);
+    } else {
+        return new Response(getPasscodePage(shortCode, fileData.name, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
+    }
+}
+
 
 async function handleMe(request, env) {
     const token = getCookie(request, 'auth_token');
@@ -291,6 +331,19 @@ function handleLogout(request) {
     headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
     const responseBody = JSON.stringify({ success: true, message: 'Logged out successfully.' });
     return new Response(responseBody, { headers });
+}
+
+// UPDATE: New handler to get file history
+async function getFileHistory(request, env) {
+    try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const historyKey = `history:upload:${userId}`;
+        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        return new Response(JSON.stringify(fileHistory.reverse()), { headers: { 'Content-Type': 'application/json' } });
+    } catch (err) {
+        if (err instanceof Response) return err;
+        return new Response(JSON.stringify({ error: "Could not fetch file history." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
 }
 
 
@@ -337,4 +390,64 @@ async function findOrCreateFolder(accessToken, env) {
     });
     const newFolder = await createResponse.json();
     return newFolder.id;
+}
+
+// UPDATE: New helper to stream the file
+async function streamFile(fileData, env) {
+    try {
+        const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
+        if (!ownerTokenData) throw new Error("File owner's token not found.");
+
+        const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
+        
+        const driveResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?alt=media`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+
+        if (!driveResponse.ok) {
+            return new Response('Could not fetch file from Google Drive. It may have been deleted or permissions changed.', { status: driveResponse.status });
+        }
+
+        const headers = new Headers();
+        headers.set('Content-Type', 'application/octet-stream');
+        headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
+        headers.set('Content-Length', driveResponse.headers.get('Content-Length'));
+
+        return new Response(driveResponse.body, { headers });
+    } catch (err) {
+        console.error("Proxy download error:", err.message);
+        return new Response('Error proxying the file.', { status: 500 });
+    }
+}
+
+// UPDATE: New helper to generate the passcode entry page
+function getPasscodePage(shortCode, fileName, hasError = false) {
+    const errorMessage = hasError ? `<p class="text-red-500 text-sm mb-4">Incorrect passcode. Please try again.</p>` : '';
+    return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Enter Passcode</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="bg-gray-100 flex items-center justify-center min-h-screen">
+            <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
+                <h2 class="text-2xl font-bold text-center text-gray-800">Passcode Required</h2>
+                <p class="text-center text-gray-600">This file is protected. Please enter the passcode to download:</p>
+                <p class="text-center text-gray-800 font-semibold break-all">${fileName}</p>
+                <form method="POST" action="/s/${shortCode}">
+                    ${errorMessage}
+                    <input type="password" name="passcode" placeholder="Enter passcode" required
+                           class="w-full px-4 py-2 mb-4 text-gray-700 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button type="submit"
+                            class="w-full px-4 py-2 font-bold text-white bg-blue-500 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        Download
+                    </button>
+                </form>
+            </div>
+        </body>
+        </html>
+    `;
 }
