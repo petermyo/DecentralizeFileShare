@@ -10,8 +10,6 @@
  */
 
 // --- Import JWT Library ---
-// Use a bare module specifier. The Cloudflare build system will resolve
-// this using the 'package.json' file.
 import * as jose from 'jose';
 
 // --- Constants ---
@@ -99,7 +97,6 @@ async function getAuthenticatedUserId(request, env) {
         throw new Response(JSON.stringify({ error: 'Unauthorized. Please log in.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
     try {
-        // Use jose.jwtVerify which handles signature and expiration in one step.
         const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
         if (!payload || !payload.userId) {
             throw new Error('Invalid token payload.');
@@ -152,7 +149,6 @@ async function handleCallback(request, env) {
         const userId = profile.id;
         const userName = profile.name;
 
-        // UPDATE: Use single KV namespace
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
@@ -161,13 +157,17 @@ async function handleCallback(request, env) {
         }));
 
         const loginHistoryKey = `history:login:${userId}`;
-        // UPDATE: Use single KV namespace
         const existingHistory = await env.APP_KV.get(loginHistoryKey, { type: 'json' }) || [];
         existingHistory.push({ timestamp: new Date().toISOString(), ip: request.headers.get('CF-Connecting-IP') });
-        // UPDATE: Use single KV namespace
         await env.APP_KV.put(loginHistoryKey, JSON.stringify(existingHistory));
 
-        // Use jose.SignJWT for creating the token.
+        // UPDATE: Add diagnostic logging and a check for the JWT_SECRET
+        console.log(`Checking JWT_SECRET... Is it defined? ${!!env.JWT_SECRET}`);
+        if (!env.JWT_SECRET || env.JWT_SECRET.length < 10) {
+            console.error('FATAL: JWT_SECRET environment variable is not set or is too short.');
+            throw new Error('Server configuration error: JWT secret is missing.');
+        }
+
         const token = await new jose.SignJWT({ userId, userName })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
@@ -178,7 +178,7 @@ async function handleCallback(request, env) {
         response.headers.set('Set-Cookie', createCookieHeader('auth_token', token));
         return response;
     } catch (err) {
-        console.error('Callback error:', err);
+        console.error('Callback error:', err.message);
         return new Response('An error occurred during authentication.', { status: 500 });
     }
 }
@@ -191,7 +191,6 @@ async function handleUpload(request, env) {
 
         if (!file) return new Response(JSON.stringify({ error: 'No file uploaded' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
 
-        // UPDATE: Use single KV namespace
         const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
         if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
 
@@ -226,7 +225,6 @@ async function handleUpload(request, env) {
         const shortCode = Math.random().toString(36).substring(2, 8);
         const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`;
 
-        // UPDATE: Use single KV namespace
         await env.APP_KV.put(`shorturl:${shortCode}`, uploadedFile.id, { expirationTtl: 60 * 60 * 24 * 30 });
 
         const fileMeta = {
@@ -234,10 +232,8 @@ async function handleUpload(request, env) {
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
         };
         const historyKey = `history:upload:${userId}`;
-        // UPDATE: Use single KV namespace
         const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         existingHistory.push(fileMeta);
-        // UPDATE: Use single KV namespace
         await env.APP_KV.put(historyKey, JSON.stringify(existingHistory));
 
         return new Response(JSON.stringify({ shortUrl }), { headers: { 'Content-Type': 'application/json' } });
@@ -252,7 +248,6 @@ async function handleShortUrl(request, env) {
     const url = new URL(request.url);
     const shortCode = url.pathname.split('/s/')[1];
     if (shortCode) {
-        // UPDATE: Use single KV namespace
         const fileId = await env.APP_KV.get(`shorturl:${shortCode}`);
         if (fileId) {
             const googleDriveUrl = `https://drive.google.com/file/d/${fileId}/view`;
@@ -307,7 +302,6 @@ async function getValidAccessToken(tokenData, userId, env) {
     });
     const newTokens = await refreshResponse.json();
     if (newTokens.error) throw new Error('Failed to refresh Google token.');
-    // UPDATE: Use single KV namespace
     await env.APP_KV.put(`user:${userId}`, JSON.stringify({
         ...tokenData,
         access_token: newTokens.access_token,
