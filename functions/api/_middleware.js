@@ -19,26 +19,11 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 
-// --- Diagnostic Logging Flag ---
-let hasLoggedEnv = false;
-
 /**
  * Main request handler. This function is the entry point for all requests.
  */
 export const onRequest = async (context) => {
     const { request, env, next } = context;
-
-    // UPDATE: Add a one-time diagnostic log to check environment variables on first request.
-    if (!hasLoggedEnv) {
-        console.log("--- Initial Environment Variable Check ---");
-        console.log(`GOOGLE_CLIENT_ID is defined: "${!!env.GOOGLE_CLIENT_ID}`);
-        console.log(`GOOGLE_CLIENT_SECRET is defined: ${!!env.GOOGLE_CLIENT_SECRET}`);
-        console.log(`JWT_SECRET is defined: ${!!env.JWT_SECRET}`);
-        console.log(`APP_KV (KV Binding) is defined: ${!!env.APP_KV}`);
-        console.log("-----------------------------------------");
-        hasLoggedEnv = true;
-    }
-
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -118,9 +103,10 @@ async function getAuthenticatedUserId(request, env) {
         }
         return payload.userId;
     } catch (err) {
-        const response = new Response(JSON.stringify({ error: 'Invalid or expired token. Please log in again.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-        response.headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
-        throw response;
+        const headers = new Headers({ 'Content-Type': 'application/json' });
+        headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
+        const responseBody = JSON.stringify({ error: 'Invalid or expired token. Please log in again.' });
+        throw new Response(responseBody, { status: 401, headers });
     }
 }
 
@@ -142,20 +128,17 @@ async function handleCallback(request, env) {
     const code = url.searchParams.get('code');
     if (!code) return new Response('Authorization code not found.', { status: 400 });
 
-    const redirect_uri = `${url.origin}/api/auth/google/callback`;
-    const requestBody = {
-        code,
-        client_id: env.GOOGLE_CLIENT_ID,
-        client_secret: "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",//env.GOOGLE_CLIENT_SECRET,
-        redirect_uri: redirect_uri,
-        grant_type: 'authorization_code',
-    };
-
     try {
         const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(requestBody),
+            body: JSON.stringify({
+                code,
+                client_id: env.GOOGLE_CLIENT_ID,
+                client_secret: env.GOOGLE_CLIENT_SECRET,
+                redirect_uri: `${url.origin}/api/auth/google/callback`,
+                grant_type: 'authorization_code',
+            }),
         });
         const tokens = await tokenResponse.json();
         if (tokens.error) throw new Error(`Google token error: ${tokens.error_description || 'Bad Request'}`);
@@ -190,9 +173,11 @@ async function handleCallback(request, env) {
             .setExpirationTime('24h')
             .sign(await getJwtSecret(env));
 
-        const response = Response.redirect(url.origin, 302);
-        response.headers.set('Set-Cookie', createCookieHeader('auth_token', token));
-        return response;
+        const headers = new Headers();
+        headers.set('Location', url.origin);
+        headers.set('Set-Cookie', createCookieHeader('auth_token', token));
+        return new Response(null, { status: 302, headers });
+
     } catch (err) {
         console.error('Callback error:', err.message);
         return new Response('An error occurred during authentication.', { status: 500 });
@@ -287,16 +272,18 @@ async function handleMe(request, env) {
         }), { headers: { 'Content-Type': 'application/json' } });
 
     } catch (err) {
-        const response = new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
-        response.headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
-        return response;
+        const headers = new Headers({ 'Content-Type': 'application/json' });
+        headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
+        const responseBody = JSON.stringify({ loggedIn: false });
+        return new Response(responseBody, { headers });
     }
 }
 
 function handleLogout(request) {
-    const response = new Response(JSON.stringify({ success: true, message: 'Logged out successfully.' }), { headers: { 'Content-Type': 'application/json' } });
-    response.headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
-    return response;
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
+    const responseBody = JSON.stringify({ success: true, message: 'Logged out successfully.' });
+    return new Response(responseBody, { headers });
 }
 
 
@@ -311,7 +298,7 @@ async function getValidAccessToken(tokenData, userId, env) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             client_id: env.GOOGLE_CLIENT_ID,
-            client_secret: "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",//env.GOOGLE_CLIENT_SECRET,
+            client_secret: env.GOOGLE_CLIENT_SECRET,
             refresh_token,
             grant_type: 'refresh_token',
         }),
