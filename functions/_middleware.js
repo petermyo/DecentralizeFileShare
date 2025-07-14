@@ -4,8 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version implements a secure, private download model with passcode,
- * expiration date support, and a file deletion endpoint.
+ * This version implements a robust, two-stage upload process to handle
+ * large files without timing out the serverless function.
  *
  */
 
@@ -42,7 +42,7 @@ export const onRequest = async (context) => {
         }
     }
 
-    // For all other requests, pass through to the static asset handler (serves the frontend)
+    // For all other requests, pass through to the static asset handler
     return next();
 }
 
@@ -56,27 +56,22 @@ async function handleApiRequest(request, env) {
     // API router logic
     switch (path) {
         case '/api/auth/google/login':
-            if (request.method === 'GET') return handleLogin(request, env);
-            break;
+            return handleLogin(request, env);
         case '/api/auth/google/callback':
-            if (request.method === 'GET') return handleCallback(request, env);
-            break;
-        case '/api/upload':
-            if (request.method === 'POST') return handleUpload(request, env);
-            break;
+            return handleCallback(request, env);
+        // UPDATE: Re-implementing two-stage upload endpoints
+        case '/api/upload/initiate':
+            return handleUploadInitiate(request, env);
+        case '/api/upload/finalize':
+            return handleUploadFinalize(request, env);
         case '/api/me':
-            if (request.method === 'GET') return handleMe(request, env);
-            break;
+            return handleMe(request, env);
         case '/api/logout':
-            if (request.method === 'POST') return handleLogout(request);
-            break;
+            return handleLogout(request);
         case '/api/files':
-             if (request.method === 'GET') return getFileHistory(request, env);
-             break;
-        // UPDATE: New endpoint to handle file deletion
+             return getFileHistory(request, env);
         case '/api/delete':
-            if (request.method === 'POST') return handleDelete(request, env);
-            break;
+            return handleDelete(request, env);
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
@@ -196,72 +191,95 @@ async function handleCallback(request, env) {
     }
 }
 
-async function handleUpload(request, env) {
+// UPDATE: New two-stage upload logic
+async function handleUploadInitiate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
-        const formData = await request.formData();
-        const file = formData.get('file');
-        const passcode = formData.get('passcode') || null;
-        const expireDate = formData.get('expireDate') || null;
+        const { fileName, fileType } = await request.json();
 
-        if (!file) return new Response(JSON.stringify({ error: 'No file uploaded' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+        if (!fileName || !fileType) {
+            return new Response(JSON.stringify({ error: 'Missing fileName or fileType' }), { status: 400 });
+        }
 
         const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
-        if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+        if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401 });
 
         const accessToken = await getValidAccessToken(tokenData, userId, env);
         const folderId = await findOrCreateFolder(accessToken, env);
 
         const now = new Date();
-        const date = now.toLocaleDateString('en-GB').replace(/\//g, '-'); // DD-MM-YYYY
-        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-'); // HH-MM-SS
-        const newFileName = `${file.name}_${date}_${time}`;
+        const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
+        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+        const newFileName = `${fileName}_${date}_${time}`;
+
+        const metadata = {
+            name: newFileName,
+            parents: [folderId],
+            mimeType: fileType,
+        };
 
         const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: newFileName, parents: [folderId] })
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json; charset=UTF-8',
+            },
+            body: JSON.stringify(metadata)
         });
-        if (!metadataRes.ok) throw new Error('Failed to initiate Google Drive upload.');
-        const locationUrl = metadataRes.headers.get('Location');
 
-        const uploadRes = await fetch(locationUrl, {
-            method: 'PUT',
-            headers: { 'Content-Length': file.size, 'Content-Type': file.type },
-            body: file.stream(),
-        });
-        const uploadedFile = await uploadRes.json();
-        if (uploadedFile.error) throw new Error(`Google API Error: ${uploadedFile.error.message}`);
+        if (!metadataRes.ok) {
+            throw new Error('Failed to initiate Google Drive upload session.');
+        }
+        
+        const uploadUrl = metadataRes.headers.get('Location');
+        return new Response(JSON.stringify({ uploadUrl, newFileName }), { status: 200 });
 
+    } catch (err) {
+        if (err instanceof Response) return err;
+        console.error('Upload initiate error:', err.message);
+        return new Response(JSON.stringify({ error: 'Failed to initiate upload.' }), { status: 500 });
+    }
+}
+
+async function handleUploadFinalize(request, env) {
+    try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const { fileId, fileName, originalName, passcode, expireDate } = await request.json();
+
+        if (!fileId || !fileName || !originalName) {
+            return new Response(JSON.stringify({ error: 'Missing required file data for finalization.' }), { status: 400 });
+        }
+        
         const shortCode = Math.random().toString(36).substring(2, 8);
         const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`;
 
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify({
-            id: uploadedFile.id,
-            name: newFileName,
+            id: fileId,
+            name: fileName,
             ownerId: userId,
-            passcode: passcode,
-            expireDate: expireDate
+            passcode: passcode || null,
+            expireDate: expireDate || null
         }), { expirationTtl: 60 * 60 * 24 * 30 });
 
         const fileMeta = {
-            fileId: uploadedFile.id, fileName: newFileName, originalName: file.name,
+            fileId, fileName, originalName,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
-            expireDate: expireDate
+            expireDate: expireDate || null
         };
         const historyKey = `history:upload:${userId}`;
         const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         existingHistory.push(fileMeta);
         await env.APP_KV.put(historyKey, JSON.stringify(existingHistory));
 
-        return new Response(JSON.stringify({ shortUrl }), { headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ shortUrl, fileMeta }), { headers: { 'Content-Type': 'application/json' } });
     } catch (err) {
         if (err instanceof Response) return err;
-        console.error('Upload error:', err.message);
-        return new Response(JSON.stringify({ error: 'Failed to upload file.', details: err.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        console.error('Upload finalize error:', err.message);
+        return new Response(JSON.stringify({ error: 'Failed to finalize upload.' }), { status: 500 });
     }
 }
+
 
 async function handleShortUrlGet(request, env) {
     const url = new URL(request.url);
@@ -340,7 +358,6 @@ async function getFileHistory(request, env) {
     }
 }
 
-// UPDATE: New handler for file deletion
 async function handleDelete(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
@@ -350,7 +367,6 @@ async function handleDelete(request, env) {
             return new Response(JSON.stringify({ error: "Missing fileId or shortUrl" }), { status: 400 });
         }
 
-        // 1. Delete from Google Drive
         const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
         if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401 });
         const accessToken = await getValidAccessToken(tokenData, userId, env);
@@ -360,16 +376,13 @@ async function handleDelete(request, env) {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
 
-        // We can proceed even if the file is already gone from Drive (status 404)
         if (!deleteResponse.ok && deleteResponse.status !== 404) {
             throw new Error('Failed to delete file from Google Drive.');
         }
 
-        // 2. Delete from KV
         const shortCode = shortUrl.split('/s/')[1];
         await env.APP_KV.delete(`shorturl:${shortCode}`);
 
-        // 3. Update history in KV
         const historyKey = `history:upload:${userId}`;
         const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = fileHistory.filter(file => file.fileId !== fileId);
