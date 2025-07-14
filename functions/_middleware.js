@@ -1,567 +1,739 @@
-/**
- * =================================================================================
- * Cloudflare Pages Function: Top-Level Middleware
- * CORRECT FILE PATH: /functions/_middleware.js
- * =================================================================================
- *
- * This version implements a secure, private download model with passcode,
- * expiration date support, and a file deletion endpoint.
- *
- */
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ဒီဖိုင် - D File</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#ffffff">
+    <link rel="apple-touch-icon" href="https://placehold.co/192x192/0284c7/FFFFFF?text=D">
 
-// --- Import JWT Library ---
-import * as jose from 'jose';
-
-// --- Constants ---
-const FOLDER_NAME = "D File Advance File Sharing";
-const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
-const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
-const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
-
-/**
- * Main request handler. This function is the entry point for all requests.
- */
-export const onRequest = async (context) => {
-    const { request, env, next } = context;
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    // Route API requests
-    if (path.startsWith('/api/')) {
-        return handleApiRequest(request, env);
-    }
-
-    // Route short URL redirects
-    if (path.startsWith('/s/')) {
-        if (request.method === 'GET') {
-            return handleShortUrlGet(request, env);
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
+        .highlight-row {
+            background-color: #f0f9ff; /* A light sky highlight */
+            transition: background-color 1s ease-out;
         }
-        if (request.method === 'POST') {
-            return handleShortUrlPost(request, env);
-        }
-    }
+    </style>
+     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useRef } = React;
 
-    // For all other requests, pass through to the static asset handler
-    return next();
-}
+        function App() {
+            // --- State Management ---
+            const [user, setUser] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [files, setFiles] = useState([]);
+            const [lists, setLists] = useState([]);
+            const [view, setView] = useState('files');
 
-/**
- * Handles all requests prefixed with /api/
- */
-async function handleApiRequest(request, env) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    // API router logic
-    switch (path) {
-        case '/api/auth/google/login':
-            return handleLogin(request, env);
-        case '/api/auth/google/callback':
-            return handleCallback(request, env);
-        case '/api/upload/initiate':
-            return handleUploadInitiate(request, env);
-        case '/api/upload/finalize':
-            return handleUploadFinalize(request, env);
-        case '/api/me':
-            return handleMe(request, env);
-        case '/api/logout':
-            return handleLogout(request);
-        case '/api/files':
-             return getFileHistory(request, env);
-        case '/api/delete':
-            return handleDelete(request, env);
-        case '/api/file/update':
-            return handleFileUpdate(request, env);
-    }
-
-    return new Response('API route not found or method not allowed', { status: 404 });
-}
-
-// --- JWT & Cookie Helpers ---
-const getJwtSecret = (env) => new TextEncoder().encode(env.JWT_SECRET);
-
-function getCookie(request, name) {
-    const cookieHeader = request.headers.get('Cookie');
-    if (!cookieHeader) return null;
-    const cookies = cookieHeader.split(';');
-    for (const cookie of cookies) {
-        const parts = cookie.trim().split('=');
-        if (parts[0] === name) return parts[1];
-    }
-    return null;
-}
-
-function createCookieHeader(name, value, options = {}) {
-    let cookie = `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax`;
-    if (options.maxAge) cookie += `; Max-Age=${options.maxAge}`;
-    return cookie;
-}
-
-// --- Auth Helper ---
-async function getAuthenticatedUserId(request, env) {
-    const token = getCookie(request, 'auth_token');
-    if (!token) {
-        throw new Response(JSON.stringify({ error: 'Unauthorized. Please log in.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-    }
-    try {
-        const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
-        if (!payload || !payload.userId) {
-            throw new Error('Invalid token payload.');
-        }
-        return payload.userId;
-    } catch (err) {
-        const headers = new Headers({ 'Content-Type': 'application/json' });
-        headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
-        const responseBody = JSON.stringify({ error: 'Invalid or expired token. Please log in again.' });
-        throw new Response(responseBody, { status: 401, headers });
-    }
-}
-
-// --- Route Handlers ---
-function handleLogin(request, env) {
-    const url = new URL(request.url);
-    const authUrl = new URL(GOOGLE_AUTH_URL);
-    authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
-    authUrl.searchParams.set('redirect_uri', `${url.origin}/api/auth/google/callback`);
-    authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile');
-    authUrl.searchParams.set('access_type', 'offline');
-    authUrl.searchParams.set('prompt', 'consent');
-    return Response.redirect(authUrl.toString(), 302);
-}
-
-async function handleCallback(request, env) {
-    const url = new URL(request.url);
-    const code = url.searchParams.get('code');
-    if (!code) return new Response('Authorization code not found.', { status: 400 });
-
-    try {
-        const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                code,
-                client_id: env.GOOGLE_CLIENT_ID,
-                client_secret: env.GOOGLE_CLIENT_SECRET,
-                redirect_uri: `${url.origin}/api/auth/google/callback`,
-                grant_type: 'authorization_code',
-            }),
-        });
-        const tokens = await tokenResponse.json();
-        if (tokens.error) throw new Error(`Google token error: ${tokens.error_description || 'Bad Request'}`);
-
-        const profileResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-            headers: { 'Authorization': `Bearer ${tokens.access_token}` }
-        });
-        const profile = await profileResponse.json();
-        const userId = profile.id;
-        const userName = profile.name;
-
-        await env.APP_KV.put(`user:${userId}`, JSON.stringify({
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            expires_in: tokens.expires_in,
-            iat: Math.floor(Date.now() / 1000)
-        }));
-
-        const loginHistoryKey = `history:login:${userId}`;
-        const existingHistory = await env.APP_KV.get(loginHistoryKey, { type: 'json' }) || [];
-        existingHistory.push({ timestamp: new Date().toISOString(), ip: request.headers.get('CF-Connecting-IP') });
-        await env.APP_KV.put(loginHistoryKey, JSON.stringify(existingHistory));
-
-        if (!env.JWT_SECRET) {
-             console.error('FATAL: JWT_SECRET environment variable is not set.');
-             throw new Error('Server configuration error: JWT secret is missing.');
-        }
-
-        const token = await new jose.SignJWT({ userId, userName })
-            .setProtectedHeader({ alg: 'HS256' })
-            .setIssuedAt()
-            .setExpirationTime('24h')
-            .sign(await getJwtSecret(env));
-
-        const headers = new Headers();
-        headers.set('Location', url.origin);
-        headers.set('Set-Cookie', createCookieHeader('auth_token', token));
-        return new Response(null, { status: 302, headers });
-
-    } catch (err) {
-        console.error('Callback error:', err.message);
-        return new Response('An error occurred during authentication.', { status: 500 });
-    }
-}
-
-async function handleUploadInitiate(request, env) {
-    try {
-        const userId = await getAuthenticatedUserId(request, env);
-        const { fileName, fileType } = await request.json();
-
-        if (!fileName || !fileType) {
-            return new Response(JSON.stringify({ error: 'Missing fileName or fileType' }), { status: 400 });
-        }
-
-        const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
-        if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401 });
-
-        const accessToken = await getValidAccessToken(tokenData, userId, env);
-        const folderId = await findOrCreateFolder(accessToken, env);
-
-        const now = new Date();
-        const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
-        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-        const newFileName = `${fileName}_${date}_${time}`;
-
-        const metadata = {
-            name: newFileName,
-            parents: [folderId],
-            mimeType: fileType,
-        };
-        
-        const requestOrigin = new URL(request.url).origin;
-
-        const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': 'application/json; charset=UTF-8',
-                'Origin': requestOrigin,
-            },
-            body: JSON.stringify(metadata)
-        });
-
-        if (!metadataRes.ok) {
-            throw new Error('Failed to initiate Google Drive upload session.');
-        }
-        
-        const uploadUrl = metadataRes.headers.get('Location');
-        return new Response(JSON.stringify({ uploadUrl, newFileName }), { status: 200 });
-
-    } catch (err) {
-        if (err instanceof Response) return err;
-        console.error('Upload initiate error:', err.message);
-        return new Response(JSON.stringify({ error: 'Failed to initiate upload.' }), { status: 500 });
-    }
-}
-
-async function handleUploadFinalize(request, env) {
-    try {
-        const userId = await getAuthenticatedUserId(request, env);
-        const { fileId, fileName, originalName, passcode, expireDate, fileSize } = await request.json();
-
-        if (!fileId || !fileName || !originalName) {
-            return new Response(JSON.stringify({ error: 'Missing required file data for finalization.' }), { status: 400 });
-        }
-        
-        const shortCode = Math.random().toString(36).substring(2, 8);
-        const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`;
-
-        await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify({
-            id: fileId,
-            name: fileName,
-            ownerId: userId,
-            passcode: passcode || null,
-            expireDate: expireDate || null
-        }), { expirationTtl: 60 * 60 * 24 * 30 });
-
-        const fileMeta = {
-            fileId, fileName, originalName,
-            uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
-            hasPasscode: !!passcode,
-            passcode: passcode || null, // UPDATE: Store the actual passcode
-            expireDate: expireDate || null,
-            size: fileSize
-        };
-        const historyKey = `history:upload:${userId}`;
-        const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
-        existingHistory.push(fileMeta);
-        await env.APP_KV.put(historyKey, JSON.stringify(existingHistory));
-
-        return new Response(JSON.stringify({ shortUrl, fileMeta }), { headers: { 'Content-Type': 'application/json' } });
-    } catch (err) {
-        if (err instanceof Response) return err;
-        console.error('Upload finalize error:', err.message);
-        return new Response(JSON.stringify({ error: 'Failed to finalize upload.' }), { status: 500 });
-    }
-}
-
-
-async function handleShortUrlGet(request, env) {
-    const url = new URL(request.url);
-    const shortCode = url.pathname.split('/s/')[1];
-    if (!shortCode) return new Response('Invalid URL', { status: 400 });
-
-    const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
-    if (!fileData) return new Response('URL not found or expired', { status: 404 });
-
-    if (fileData.expireDate && new Date(fileData.expireDate) < new Date()) {
-        return new Response('This link has expired.', { status: 403 });
-    }
-
-    if (fileData.passcode) {
-        return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
-    }
-
-    return streamFile(fileData, env);
-}
-
-async function handleShortUrlPost(request, env) {
-    const url = new URL(request.url);
-    const shortCode = url.pathname.split('/s/')[1];
-    if (!shortCode) return new Response('Invalid URL', { status: 400 });
-
-    const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
-    if (!fileData) return new Response('URL not found or expired', { status: 404 });
-
-    const formData = await request.formData();
-    const submittedPasscode = formData.get('passcode');
-
-    if (fileData.passcode && submittedPasscode === fileData.passcode) {
-        return streamFile(fileData, env);
-    } else {
-        return new Response(getPasscodePage(shortCode, fileData.name, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
-    }
-}
-
-async function handleMe(request, env) {
-    const token = getCookie(request, 'auth_token');
-    if (!token) {
-        return new Response(JSON.stringify({ loggedIn: false }), { headers: { 'Content-Type': 'application/json' } });
-    }
-    try {
-        const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
-        return new Response(JSON.stringify({
-            loggedIn: true,
-            userId: payload.userId,
-            userName: payload.userName,
-        }), { headers: { 'Content-Type': 'application/json' } });
-
-    } catch (err) {
-        const headers = new Headers({ 'Content-Type': 'application/json' });
-        headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
-        const responseBody = JSON.stringify({ loggedIn: false });
-        return new Response(responseBody, { headers });
-    }
-}
-
-function handleLogout(request) {
-    const headers = new Headers({ 'Content-Type': 'application/json' });
-    headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
-    const responseBody = JSON.stringify({ success: true, message: 'Logged out successfully.' });
-    return new Response(responseBody, { headers });
-}
-
-async function getFileHistory(request, env) {
-    try {
-        const userId = await getAuthenticatedUserId(request, env);
-        const historyKey = `history:upload:${userId}`;
-        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
-        return new Response(JSON.stringify(fileHistory.reverse()), { headers: { 'Content-Type': 'application/json' } });
-    } catch (err) {
-        if (err instanceof Response) return err;
-        return new Response(JSON.stringify({ error: "Could not fetch file history." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
-    }
-}
-
-async function handleDelete(request, env) {
-    try {
-        const userId = await getAuthenticatedUserId(request, env);
-        const { fileId, shortUrl } = await request.json();
-
-        if (!fileId || !shortUrl) {
-            return new Response(JSON.stringify({ error: "Missing fileId or shortUrl" }), { status: 400 });
-        }
-
-        const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
-        if (!tokenData) return new Response(JSON.stringify({ error: 'User token not found.' }), { status: 401 });
-        const accessToken = await getValidAccessToken(tokenData, userId, env);
-
-        const deleteResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileId}`, {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${accessToken}` }
-        });
-
-        if (!deleteResponse.ok && deleteResponse.status !== 404) {
-            throw new Error('Failed to delete file from Google Drive.');
-        }
-
-        const shortCode = shortUrl.split('/s/')[1];
-        await env.APP_KV.delete(`shorturl:${shortCode}`);
-
-        const historyKey = `history:upload:${userId}`;
-        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
-        const updatedHistory = fileHistory.filter(file => file.fileId !== fileId);
-        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
-
-        return new Response(JSON.stringify({ success: true, message: 'File deleted successfully.' }), { status: 200 });
-
-    } catch (err) {
-        if (err instanceof Response) return err;
-        console.error('Delete error:', err.message);
-        return new Response(JSON.stringify({ error: 'Failed to delete file.', details: err.message }), { status: 500 });
-    }
-}
-
-async function handleFileUpdate(request, env) {
-    try {
-        const userId = await getAuthenticatedUserId(request, env);
-        // The `passcode` property will be undefined if the user didn't change it.
-        const { shortUrl, passcode, expireDate } = await request.json();
-
-        if (!shortUrl) {
-            return new Response(JSON.stringify({ error: "Missing shortUrl" }), { status: 400 });
-        }
-
-        const shortCode = shortUrl.split('/s/')[1];
-        const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
-
-        if (!fileData) {
-            return new Response(JSON.stringify({ error: "File not found" }), { status: 404 });
-        }
-        
-        if (fileData.ownerId !== userId) {
-            return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
-        }
-
-        // UPDATE: Only update properties if they were included in the request.
-        let hasPasscodeChanged = false;
-        if (passcode !== undefined) {
-            fileData.passcode = passcode || null;
-            hasPasscodeChanged = true;
-        }
-        if (expireDate !== undefined) {
-             fileData.expireDate = expireDate || null;
-        }
-        
-        await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
-        
-        const historyKey = `history:upload:${userId}`;
-        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
-        const updatedHistory = fileHistory.map(file => {
-            if (file.shortUrl === shortUrl) {
-                const updatedFile = { ...file };
-                if (hasPasscodeChanged) {
-                    updatedFile.hasPasscode = !!passcode;
-                    updatedFile.passcode = passcode || null;
+            // --- Check Login Status on Load ---
+            useEffect(() => {
+                const checkUserStatus = async () => {
+                    try {
+                        const response = await fetch('/api/me');
+                        const data = await response.json();
+                        if (data.loggedIn) {
+                            setUser({ name: data.userName });
+                        }
+                    } catch (err) {
+                        console.error("Failed to check user status:", err);
+                    } finally {
+                        setIsLoading(false);
+                    }
+                };
+                checkUserStatus();
+            }, []);
+            
+            // --- Fetch Data on Login ---
+            const fetchData = useCallback(async () => {
+                if (user) {
+                    try {
+                        const [filesRes, listsRes] = await Promise.all([
+                            fetch('/api/files'),
+                            fetch('/api/lists')
+                        ]);
+                        const filesData = await filesRes.json();
+                        const listsData = await listsRes.json();
+                        setFiles(filesData);
+                        setLists(listsData);
+                    } catch (err) {
+                        console.error("Failed to fetch data:", err);
+                    }
                 }
-                if (expireDate !== undefined) {
-                    updatedFile.expireDate = expireDate || null;
-                }
-                return updatedFile;
+            }, [user]);
+
+            useEffect(() => {
+                fetchData();
+            }, [fetchData]);
+
+            const handleLogout = async () => {
+                await fetch('/api/logout', { method: 'POST' });
+                setUser(null);
+                setFiles([]);
+                setLists([]);
+            };
+            
+            const addFileToList = (newFile) => {
+                setFiles(prevFiles => [newFile, ...prevFiles]);
             }
-            return file;
-        });
-        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+            
+            const handleFileDelete = (fileId) => {
+                setFiles(prevFiles => prevFiles.filter(file => file.fileId !== fileId));
+            }
+            
+            const handleFileUpdate = (updatedFile) => {
+                setFiles(prevFiles => prevFiles.map(file => 
+                    file.fileId === updatedFile.fileId ? { ...file, ...updatedFile } : file
+                ));
+            };
 
-        return new Response(JSON.stringify({ success: true, message: 'File updated successfully.' }), { status: 200 });
+            // --- Render Logic ---
+            if (isLoading) {
+                return <div className="min-h-screen flex items-center justify-center text-gray-700">Loading...</div>;
+            }
 
-    } catch (err) {
-        if (err instanceof Response) return err;
-        console.error('File update error:', err.message);
-        return new Response(JSON.stringify({ error: 'Failed to update file.', details: err.message }), { status: 500 });
-    }
-}
-
-
-// --- Helper Functions ---
-async function getValidAccessToken(tokenData, userId, env) {
-    const { access_token, refresh_token, iat, expires_in } = tokenData;
-    if (Date.now() / 1000 - iat < expires_in - 300) {
-        return access_token;
-    }
-    const refreshResponse = await fetch(GOOGLE_TOKEN_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            client_id: env.GOOGLE_CLIENT_ID,
-            client_secret: env.GOOGLE_CLIENT_SECRET,
-            refresh_token,
-            grant_type: 'refresh_token',
-        }),
-    });
-    const newTokens = await refreshResponse.json();
-    if (newTokens.error) throw new Error('Failed to refresh Google token.');
-    await env.APP_KV.put(`user:${userId}`, JSON.stringify({
-        ...tokenData,
-        access_token: newTokens.access_token,
-        expires_in: newTokens.expires_in,
-        iat: Math.floor(Date.now() / 1000),
-    }));
-    return newTokens.access_token;
-}
-
-async function findOrCreateFolder(accessToken, env) {
-    const query = `mimeType='application/vnd.google-apps.folder' and name='${FOLDER_NAME}' and trashed=false`;
-    const searchResponse = await fetch(`${GOOGLE_DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(id,name)`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-    const searchResult = await searchResponse.json();
-    if (searchResult.files && searchResult.files.length > 0) {
-        return searchResult.files[0].id;
-    }
-    const createResponse = await fetch(`${GOOGLE_DRIVE_API}/files`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: FOLDER_NAME, mimeType: 'application/vnd.google-apps.folder' }),
-    });
-    const newFolder = await createResponse.json();
-    return newFolder.id;
-}
-
-async function streamFile(fileData, env) {
-    try {
-        const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
-        if (!ownerTokenData) throw new Error("File owner's token not found.");
-
-        const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
-        
-        const driveResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?alt=media`, {
-            headers: { 'Authorization': `Bearer ${accessToken}` }
-        });
-
-        if (!driveResponse.ok) {
-            return new Response('Could not fetch file from Google Drive. It may have been deleted or permissions changed.', { status: driveResponse.status });
+            return (
+                <div className="min-h-screen bg-slate-50 text-slate-800">
+                    <header className="bg-sky-600 shadow-lg sticky top-0 z-40">
+                        <div className="container mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center h-16">
+                             <div className="flex items-center space-x-3">
+                                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                <h1 className="text-xl font-bold text-white">ဒီဖိုင်</h1>
+                            </div>
+                            {user && (
+                                 <div className="flex items-center space-x-4">
+                                    <span className="text-sky-100 hidden sm:block">Welcome, {user.name}</span>
+                                    <button onClick={handleLogout} className="bg-sky-500 hover:bg-sky-400 text-white font-semibold py-2 px-4 rounded-lg text-sm transition">
+                                        Logout
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </header>
+                    
+                    <main className="container mx-auto p-4 sm:p-6 lg:p-8">
+                        {user ? (
+                            <MainLayout 
+                                files={files} 
+                                lists={lists}
+                                view={view}
+                                setView={setView}
+                                addFileToList={addFileToList} 
+                                onFileDelete={handleFileDelete} 
+                                onFileUpdate={handleFileUpdate}
+                                onListCreated={fetchData}
+                            />
+                        ) : (
+                            <LoginScreen />
+                        )}
+                    </main>
+                    <footer className="text-center p-6 text-slate-500 text-sm">
+                         © 2025 Myo ZarNi Aung. All rights reserved.
+                    </footer>
+                </div>
+            );
         }
+        
+        const LoginScreen = () => (
+            <div className="text-center max-w-4xl mx-auto mt-10 md:mt-10 p-5 animate-fade-in">
+                <h1 className="text-4xl md:text-8xl font-bold text-sky-600 mb-7 tracking-tighter">ဒီဖိုင်</h1>
+                <h2 className="text-2xl md:text-3xl font-medium text-slate-700 mb-6">Your Files, Your Privacy, Your Drive.</h2>
+                <p className="text-slate-600 max-w-2xl mx-auto mb-10">
+                    Securely store files on your own Google Drive and create beautiful, shareable links.
+                    <span className="font-semibold text-sky-600"> ဒီဖိုင်</span> enhances your file sharing to be better & more secure.
+                </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left mb-12">
+                    <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
+                        <h4 className="font-bold text-slate-800 mb-2">Complete Control</h4>
+                        <p className="text-sm text-slate-600">Files are stored in a dedicated folder on your own Google Drive, not our servers.</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
+                        <h4 className="font-bold text-slate-800 mb-2">Large File Support</h4>
+                        <p className="text-sm text-slate-600">Upload any file up to 5TB, with a generous 750GB daily limit.</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
+                        <h4 className="font-bold text-slate-800 mb-2">Secure Sharing</h4>
+                        <p className="text-sm text-slate-600">Protect your links with optional passcodes and expiration dates.</p>
+                    </div>
+                </div>
 
-        const headers = new Headers();
-        headers.set('Content-Type', 'application/octet-stream');
-        headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
-        headers.set('Content-Length', driveResponse.headers.get('Content-Length'));
-
-        return new Response(driveResponse.body, { headers });
-    } catch (err) {
-        console.error("Proxy download error:", err.message);
-        return new Response('Error proxying the file.', { status: 500 });
-    }
-}
-
-function getPasscodePage(shortCode, fileName, hasError = false) {
-    const errorMessage = hasError ? `<p class="text-red-500 text-sm mb-4">Incorrect passcode. Please try again.</p>` : '';
-    return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Enter Passcode</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-gray-100 flex items-center justify-center min-h-screen">
-            <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
-                <h2 class="text-2xl font-bold text-center text-gray-800">Passcode Required</h2>
-                <p class="text-center text-gray-600">This file is protected. Please enter the passcode to download:</p>
-                <p class="text-center text-gray-800 font-semibold break-all">${fileName}</p>
-                <form method="POST" action="/s/${shortCode}">
-                    ${errorMessage}
-                    <input type="password" name="passcode" placeholder="Enter passcode" required
-                           class="w-full px-4 py-2 mb-4 text-gray-700 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <button type="submit"
-                            class="w-full px-4 py-2 font-bold text-white bg-blue-500 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        Download
-                    </button>
-                </form>
+                <a href="/api/auth/google/login" className="inline-block bg-sky-500 hover:bg-sky-600 text-white font-bold py-4 px-10 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 text-lg shadow-xl hover:shadow-2xl">
+                  Login with Google & Share Instantly
+                </a>
             </div>
-        </body>
-        </html>
-    `;
-}
+        );
+        
+        const MainLayout = ({ files, lists, view, setView, addFileToList, onFileDelete, onFileUpdate, onListCreated }) => {
+            const [recentUploadUrl, setRecentUploadUrl] = useState(null);
+            const [editingFile, setEditingFile] = useState(null);
+            const [deletingFile, setDeletingFile] = useState(null);
+            const [selectedFileIds, setSelectedFileIds] = useState([]);
+            const [isCreatingList, setIsCreatingList] = useState(false);
+
+            useEffect(() => {
+                if (recentUploadUrl) {
+                    const timer = setTimeout(() => {
+                        setRecentUploadUrl(null);
+                    }, 3000);
+                    return () => clearTimeout(timer);
+                }
+            }, [recentUploadUrl]);
+
+            return (
+                <>
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-fade-in">
+                        <div className="lg:col-span-4">
+                            <UploadForm addFileToList={addFileToList} setRecentUploadUrl={setRecentUploadUrl} />
+                        </div>
+                        <div className="lg:col-span-8">
+                            <div className="mb-4 border-b border-slate-200">
+                                <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+                                    <button onClick={() => setView('files')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${view === 'files' ? 'border-sky-500 text-sky-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>
+                                        My Files
+                                    </button>
+                                    <button onClick={() => setView('lists')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${view === 'lists' ? 'border-sky-500 text-sky-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>
+                                        My Lists
+                                    </button>
+                                </nav>
+                            </div>
+
+                            {view === 'files' ? (
+                                <FileTable 
+                                    files={files} 
+                                    onFileDelete={onFileDelete} 
+                                    onEditFile={setEditingFile} 
+                                    onDeleteFile={setDeletingFile} 
+                                    recentUploadUrl={recentUploadUrl}
+                                    selectedFileIds={selectedFileIds}
+                                    setSelectedFileIds={setSelectedFileIds}
+                                    onOpenCreateList={() => setIsCreatingList(true)}
+                                />
+                            ) : (
+                                <ListsTable lists={lists} />
+                            )}
+                        </div>
+                    </div>
+                    {editingFile && (
+                        <EditModal 
+                            file={editingFile} 
+                            onClose={() => setEditingFile(null)} 
+                            onUpdate={(updatedFile) => {
+                                onFileUpdate(updatedFile);
+                                setEditingFile(null);
+                            }}
+                        />
+                    )}
+                     {isCreatingList && (
+                        <CreateListModal
+                            fileIds={selectedFileIds}
+                            onClose={() => setIsCreatingList(false)}
+                            onCreated={() => {
+                                onListCreated();
+                                setSelectedFileIds([]);
+                                setIsCreatingList(false);
+                                setView('lists');
+                            }}
+                        />
+                    )}
+                    {deletingFile && (
+                        <ConfirmDeleteModal
+                            file={deletingFile}
+                            onClose={() => setDeletingFile(null)}
+                            onConfirm={() => {
+                                onFileDelete(deletingFile.fileId);
+                                setDeletingFile(null);
+                            }}
+                        />
+                    )}
+                </>
+            );
+        };
+        
+        const UploadForm = ({ addFileToList, setRecentUploadUrl }) => {
+            const [selectedFile, setSelectedFile] = useState(null);
+            const [passcode, setPasscode] = useState('');
+            const [expireDate, setExpireDate] = useState('');
+            const [isUploading, setIsUploading] = useState(false);
+            const [error, setError] = useState('');
+            const [progress, setProgress] = useState(0);
+            const [dragActive, setDragActive] = useState(false);
+            const [lastResult, setLastResult] = useState(null);
+            const inputRef = useRef(null);
+            
+            const handleFileChange = (files) => {
+                if (files && files[0]) {
+                    setSelectedFile(files[0]);
+                    setLastResult(null);
+                    setError('');
+                }
+            }
+            
+            const handleDrag = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.type === "dragenter" || e.type === "dragover") {
+                    setDragActive(true);
+                } else if (e.type === "dragleave") {
+                    setDragActive(false);
+                }
+            };
+            
+            const handleDrop = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setDragActive(false);
+                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                    handleFileChange(e.dataTransfer.files);
+                }
+            };
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                if (!selectedFile) {
+                    setError('Please select a file to upload.');
+                    return;
+                }
+                setIsUploading(true);
+                setError('');
+                setLastResult(null);
+                setProgress(0);
+
+                try {
+                    const initResponse = await fetch('/api/upload/initiate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fileName: selectedFile.name, fileType: selectedFile.type })
+                    });
+                    if (!initResponse.ok) throw new Error('Could not start upload session.');
+                    const { uploadUrl, newFileName } = await initResponse.json();
+
+                    const uploadedFile = await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('PUT', uploadUrl, true);
+                        xhr.setRequestHeader('Content-Type', selectedFile.type);
+
+                        xhr.upload.onprogress = (event) => {
+                            if (event.lengthComputable) {
+                                const percentComplete = Math.round((event.loaded / event.total) * 100);
+                                setProgress(percentComplete);
+                            }
+                        };
+
+                        xhr.onload = () => {
+                            if (xhr.status >= 200 && xhr.status < 300) {
+                                resolve(JSON.parse(xhr.response));
+                            } else {
+                                reject(new Error(`Upload failed with status: ${xhr.status}`));
+                            }
+                        };
+                        xhr.onerror = () => reject(new Error('Upload failed due to a network error.'));
+                        xhr.send(selectedFile);
+                    });
+
+                    const finalizeResponse = await fetch('/api/upload/finalize', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            fileId: uploadedFile.id,
+                            fileName: newFileName,
+                            originalName: selectedFile.name,
+                            passcode,
+                            expireDate,
+                            fileSize: selectedFile.size
+                        })
+                    });
+                    
+                    const finalResult = await finalizeResponse.json();
+                    if (!finalizeResponse.ok) throw new Error(finalResult.error || 'Failed to finalize upload.');
+
+                    addFileToList(finalResult.fileMeta);
+                    setRecentUploadUrl(finalResult.shortUrl);
+                    setLastResult(finalResult);
+                    
+                    setSelectedFile(null);
+                    setPasscode('');
+                    setExpireDate('');
+
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setIsUploading(false);
+                    setProgress(0);
+                }
+            };
+
+            return (
+                <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
+                    <h3 className="text-xl font-bold text-slate-800 mb-4">Upload New File</h3>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div 
+                            onDragEnter={handleDrag} 
+                            onDragLeave={handleDrag} 
+                            onDragOver={handleDrag} 
+                            onDrop={handleDrop}
+                            onClick={() => inputRef.current.click()}
+                            className={`flex justify-center items-center w-full h-32 px-6 transition bg-slate-50 border-2 ${dragActive ? "border-sky-500" : "border-slate-300"} border-dashed rounded-lg cursor-pointer hover:border-sky-400`}>
+                            <div className="space-y-1 text-center">
+                                <svg className="mx-auto h-10 w-10 text-slate-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true"><path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                <p className="text-sm text-slate-600">
+                                    <span className="font-semibold text-sky-600">Click to upload</span> or drag and drop
+                                </p>
+                                {selectedFile ? 
+                                    <p className="text-xs text-slate-500">{selectedFile.name}</p> :
+                                    <p className="text-xs text-slate-500">Any file up to 5TB</p>
+                                }
+                            </div>
+                            <input ref={inputRef} type="file" className="hidden" onChange={(e) => handleFileChange(e.target.files)} />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700">Passcode (Optional)</label>
+                            <input type="password" value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="Protect your file" className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"/>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700">Expiration Date (Optional)</label>
+                            <input type="date" value={expireDate} onChange={e => setExpireDate(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"/>
+                        </div>
+                        
+                        {error && <p className="text-sm text-red-600 p-2 bg-red-100 rounded-md">{error}</p>}
+
+                        <button 
+                            type="submit" 
+                            disabled={isUploading || !selectedFile} 
+                            style={isUploading ? {
+                                background: `linear-gradient(to right, #0ea5e9 ${progress}%, #64748b ${progress}%)`,
+                                transition: 'background 0.1s ease'
+                            } : {}}
+                            className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 disabled:bg-slate-400 disabled:text-slate-200"
+                        >
+                            {isUploading ? `Uploading... ${progress}%` : 'Upload & Get Link'}
+                        </button>
+                        
+                        {lastResult && (
+                            <div className="mt-4 p-3 bg-sky-100 border border-sky-300 rounded-md animate-fade-in">
+                                <label className="block text-sm font-medium text-sky-800">Upload Complete! Here is your link:</label>
+                                <div className="mt-1 flex rounded-md shadow-sm">
+                                    <input type="text" readOnly value={lastResult.shortUrl} className="flex-1 block w-full rounded-none rounded-l-md sm:text-sm border-slate-300 bg-slate-50 text-slate-700 p-2"/>
+                                    <button type="button" onClick={() => navigator.clipboard.writeText(lastResult.shortUrl)} className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-slate-300 bg-slate-100 text-slate-600 hover:bg-slate-200">
+                                        Copy
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </form>
+                </div>
+            );
+        }
+        
+        const FileTable = ({ files, onFileDelete, onEditFile, onDeleteFile, recentUploadUrl, selectedFileIds, setSelectedFileIds, onOpenCreateList }) => {
+            const [copySuccess, setCopySuccess] = useState('');
+            const [currentPage, setCurrentPage] = useState(1);
+            const [searchTerm, setSearchTerm] = useState(''); // UPDATE: State for search
+            const ITEMS_PER_PAGE = 10;
+
+            const handleCopy = (url) => {
+                navigator.clipboard.writeText(url);
+                setCopySuccess(url);
+                setTimeout(() => setCopySuccess(''), 2000);
+            };
+            
+             const handleSelectFile = (fileId) => {
+                setSelectedFileIds(prev => 
+                    prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
+                );
+            };
+
+            // UPDATE: Filter files based on search term
+            const filteredFiles = files.filter(file => 
+                file.fileName.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
+            const paginatedFiles = filteredFiles.slice(
+                (currentPage - 1) * ITEMS_PER_PAGE,
+                currentPage * ITEMS_PER_PAGE
+            );
+            const pageCount = Math.ceil(filteredFiles.length / ITEMS_PER_PAGE);
+            
+            const formatBytes = (bytes, decimals = 2) => {
+                if (!bytes || bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const dm = decimals < 0 ? 0 : decimals;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+            }
+
+            if (files.length === 0) {
+                return (
+                    <div className="bg-white p-6 rounded-xl shadow-lg text-center border border-slate-200">
+                        <h3 className="text-xl font-bold text-slate-800 mb-2">My Files</h3>
+                        <p className="text-slate-500">You haven't uploaded any files yet. Use the form on the left to get started.</p>
+                    </div>
+                );
+            }
+            
+            return (
+                 <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
+                    <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
+                        <h3 className="text-xl font-bold text-slate-800">My Files</h3>
+                        {/* UPDATE: Search input */}
+                        <div className="w-full md:w-auto">
+                             <input 
+                                type="search"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Search files..."
+                                className="w-full md:w-64 px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                            />
+                        </div>
+                        {selectedFileIds.length > 0 && (
+                            <button onClick={onOpenCreateList} className="bg-sky-500 text-white font-semibold py-2 px-4 rounded-lg text-sm">
+                                Create List ({selectedFileIds.length})
+                            </button>
+                        )}
+                    </div>
+                    <div className="hidden md:block">
+                        <table className="min-w-full divide-y divide-slate-200">
+                            <thead className="bg-slate-50">
+                                <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider"></th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">File Name</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Size</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Link</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Expires</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Protection</th>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-slate-200">
+                                {paginatedFiles.map((file, index) => (
+                                    <tr key={file.fileId || index} className={file.shortUrl === recentUploadUrl ? 'highlight-row' : ''}>
+                                        <td className="px-6 py-4"><input type="checkbox" checked={selectedFileIds.includes(file.fileId)} onChange={() => handleSelectFile(file.fileId)} className="h-4 w-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500"/></td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900 truncate max-w-xs">{file.fileName}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{formatBytes(file.size)}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                                            <button onClick={() => handleCopy(file.shortUrl)} title="Copy link" className="text-slate-400 hover:text-sky-600">
+                                                {copySuccess === file.shortUrl ? 
+                                                    <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg> :
+                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                                }
+                                            </button>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{file.expireDate || 'Never'}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
+                                            {file.hasPasscode ? 
+                                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Passcode</span> : 
+                                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">None</span>}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 flex items-center space-x-3">
+                                             <a href={file.shortUrl} target="_blank" title="Download" className="text-slate-400 hover:text-sky-600"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg></a>
+                                            <button onClick={() => onEditFile(file)} title="Edit" className="text-slate-400 hover:text-sky-600">
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                            </button>
+                                            <button onClick={() => onDeleteFile(file)} title="Delete" className="text-slate-400 hover:text-red-600">
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div className="md:hidden space-y-4 mt-4">
+                        {paginatedFiles.map((file, index) => (
+                             <div key={file.fileId || index} className={`bg-white p-4 rounded-lg shadow border ${file.shortUrl === recentUploadUrl ? 'border-sky-300' : 'border-slate-200'}`}>
+                                <div className="flex items-start space-x-4">
+                                    <input type="checkbox" checked={selectedFileIds.includes(file.fileId)} onChange={() => handleSelectFile(file.fileId)} className="mt-1 h-4 w-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500"/>
+                                    <div className="flex-1">
+                                        <div className="font-semibold text-slate-800 truncate">{file.fileName}</div>
+                                        <div className="text-sm text-slate-500 mt-1">Size: {formatBytes(file.size)}</div>
+                                        <div className="text-sm text-slate-500">Expires: {file.expireDate || 'Never'}</div>
+                                        <div className="mt-2">
+                                            {file.hasPasscode ? 
+                                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Passcode</span> : 
+                                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">None</span>}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="mt-4 pt-4 border-t border-slate-200 flex justify-between items-center">
+                                    <a href={file.shortUrl} target="_blank" className="text-sky-600 hover:text-sky-800 font-semibold">Download</a>
+                                    <div className="flex items-center space-x-3">
+                                        <button onClick={() => onEditFile(file)} title="Edit" className="text-slate-400 hover:text-sky-600"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
+                                        <button onClick={() => onDeleteFile(file)} title="Delete" className="text-slate-400 hover:text-red-600"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
+                                    </div>
+                                </div>
+                             </div>
+                        ))}
+                    </div>
+                    {pageCount > 1 && (
+                        <Pagination currentPage={currentPage} pageCount={pageCount} setCurrentPage={setCurrentPage} />
+                    )}
+                </div>
+            );
+        }
+        
+        const Pagination = ({ currentPage, pageCount, setCurrentPage }) => {
+            const pageNumbers = [];
+            for (let i = 1; i <= pageCount; i++) {
+                pageNumbers.push(i);
+            }
+
+            return (
+                <div className="mt-6 flex items-center justify-center">
+                    <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                        <button
+                            onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                            disabled={currentPage === 1}
+                            className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-slate-300 bg-white text-sm font-medium text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                            <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                        </button>
+                        {pageNumbers.map(number => (
+                            <button
+                                key={number}
+                                onClick={() => setCurrentPage(number)}
+                                className={`relative inline-flex items-center px-4 py-2 border border-slate-300 text-sm font-medium ${
+                                    currentPage === number ? 'z-10 bg-sky-50 border-sky-500 text-sky-600' : 'bg-white text-slate-500 hover:bg-slate-50'
+                                }`}
+                            >
+                                {number}
+                            </button>
+                        ))}
+                        <button
+                            onClick={() => setCurrentPage(prev => Math.min(prev + 1, pageCount))}
+                            disabled={currentPage === pageCount}
+                            className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-slate-300 bg-white text-sm font-medium text-slate-500 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                            <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+                            </svg>
+                        </button>
+                    </nav>
+                </div>
+            );
+        };
+
+        const EditModal = ({ file, onClose, onUpdate }) => {
+            const [passcode, setPasscode] = useState(file.passcode || '');
+            const [expireDate, setExpireDate] = useState(file.expireDate || '');
+            const [isSaving, setIsSaving] = useState(false);
+            const [error, setError] = useState('');
+
+            const handleSave = async (e) => {
+                e.preventDefault();
+                setIsSaving(true);
+                setError('');
+                try {
+                    const response = await fetch('/api/file/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            shortUrl: file.shortUrl,
+                            passcode: passcode,
+                            expireDate: expireDate
+                        })
+                    });
+                    if (!response.ok) throw new Error('Failed to update file.');
+                    onUpdate({ ...file, hasPasscode: !!passcode, passcode: passcode, expireDate });
+                } catch(err) {
+                    setError(err.message);
+                } finally {
+                    setIsSaving(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <h3 className="text-lg font-bold text-gray-800 mb-4">Edit File: {file.fileName}</h3>
+                        <form onSubmit={handleSave} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Passcode (Optional)</label>
+                                <input type="text" value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="Leave blank to remove" className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"/>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Expiration Date (Optional)</label>
+                                <input type="date" value={expireDate} onChange={e => setExpireDate(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"/>
+                            </div>
+                            {error && <p className="text-sm text-red-600">{error}</p>}
+                            <div className="flex justify-end space-x-3 pt-4">
+                                <button type="button" onClick={onClose} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-2 px-4 rounded-lg text-sm transition">Cancel</button>
+                                <button type="submit" disabled={isSaving} className="bg-sky-600 hover:bg-sky-700 text-white font-semibold py-2 px-4 rounded-lg text-sm transition disabled:bg-slate-400">
+                                    {isSaving ? 'Saving...' : 'Save Changes'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
+        
+        const ConfirmDeleteModal = ({ file, onClose, onConfirm }) => {
+            const [isDeleting, setIsDeleting] = useState(false);
+
+            const handleDelete = async () => {
+                setIsDeleting(true);
+                try {
+                    const response = await fetch('/api/delete', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fileId: file.fileId, shortUrl: file.shortUrl })
+                    });
+                    if (!response.ok) {
+                        throw new Error('Failed to delete the file.');
+                    }
+                    onConfirm();
+                } catch (err) {
+                    alert(err.message);
+                    setIsDeleting(false);
+                }
+            };
+
+            return (
+                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <h3 className="text-lg font-bold text-gray-800">Confirm Deletion</h3>
+                        <p className="my-4 text-gray-600">Are you sure you want to delete <span className="font-semibold">{file.fileName}</span>? This action cannot be undone.</p>
+                        <div className="flex justify-end space-x-3">
+                            <button type="button" onClick={onClose} className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-semibold py-2 px-4 rounded-lg text-sm transition">Cancel</button>
+                            <button onClick={handleDelete} disabled={isDeleting} className="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg text-sm transition disabled:bg-slate-400">
+                                {isDeleting ? 'Deleting...' : 'Delete File'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+    
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js').then(registration => {
+                    console.log('ServiceWorker registration successful with scope: ', registration.scope);
+                }, err => {
+                    console.log('ServiceWorker registration failed: ', err);
+                });
+            });
+        }
+    </script>
+</body>
+</html>
