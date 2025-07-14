@@ -4,7 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version adds the ability to create and share lists of files.
+ * This version adds the ability to edit the passcode and expiration
+ * for previously created file lists.
  *
  */
 
@@ -36,7 +37,7 @@ export const onRequest = async (context) => {
         return handleShortUrlGet(request, env);
     }
     
-    // UPDATE: Route short URL redirects for lists
+    // Route short URL redirects for lists
     if (path.startsWith('/l/')) {
          if (request.method === 'GET') {
             return handleListGet(request, env);
@@ -47,7 +48,7 @@ export const onRequest = async (context) => {
     }
 
 
-    // For all other requests, pass through to the static asset handler (serves the frontend)
+    // For all other requests, pass through to the static asset handler
     return next();
 }
 
@@ -78,13 +79,15 @@ async function handleApiRequest(request, env) {
             return handleDelete(request, env);
         case '/api/file/update':
             return handleFileUpdate(request, env);
-        // UPDATE: New endpoints for lists
         case '/api/lists/create':
             return handleListCreate(request, env);
         case '/api/lists':
             return getListsHistory(request, env);
         case '/api/list/data':
              return getListData(request, env);
+        // UPDATE: New endpoint to handle list updates
+        case '/api/list/update':
+            return handleListUpdate(request, env);
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
@@ -470,7 +473,6 @@ async function handleFileUpdate(request, env) {
     }
 }
 
-// UPDATE: New handlers for lists
 async function handleListCreate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
@@ -497,7 +499,7 @@ async function handleListCreate(request, env) {
             passcode: passcode || null,
             expireDate: expireDate || null,
         };
-        await env.APP_KV.put(`list:${shortCode}`, JSON.stringify(listData), { expirationTtl: 60 * 60 * 24 * 90 }); // 90-day expiry
+        await env.APP_KV.put(`list:${shortCode}`, JSON.stringify(listData), { expirationTtl: 60 * 60 * 24 * 90 });
 
         const listHistoryKey = `history:list:${userId}`;
         const existingListHistory = await env.APP_KV.get(listHistoryKey, { type: 'json' }) || [];
@@ -550,7 +552,6 @@ async function getListData(request, env) {
 }
 
 async function handleListGet(request, env) {
-    // This just serves the main HTML page. React will handle fetching the data.
     return env.ASSETS.fetch(request);
 }
 
@@ -569,6 +570,7 @@ async function handleListPost(request, env) {
         return new Response(JSON.stringify({ error: 'Incorrect passcode' }), { status: 401 });
     }
 }
+
 
 // --- Helper Functions ---
 async function getValidAccessToken(tokenData, userId, env) {
