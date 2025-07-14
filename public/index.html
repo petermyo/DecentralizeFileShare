@@ -202,55 +202,73 @@
                 setLastResult(null);
                 setProgress(0);
 
-                const formData = new FormData();
-                formData.append('file', selectedFile);
-                if (passcode) formData.append('passcode', passcode);
-                if (expireDate) formData.append('expireDate', expireDate);
-
-                const progressInterval = setInterval(() => {
-                    setProgress(oldProgress => {
-                        if (oldProgress >= 95) {
-                            clearInterval(progressInterval);
-                            return oldProgress;
-                        }
-                        return oldProgress + 5;
-                    });
-                }, 200);
-
                 try {
-                    const response = await fetch('/api/upload', { method: 'POST', body: formData });
-                    
-                    const contentType = response.headers.get("content-type");
-                    if (!response.ok || !contentType || !contentType.includes("application/json")) {
-                        throw new Error('Server timed out processing the large file. Please check your file history; the upload may have succeeded despite this error.');
-                    }
-                    
-                    const result = await response.json();
-                    if (result.error) throw new Error(result.error);
-                    
-                    setProgress(100);
-                    const newFile = {
-                        ...result,
-                        fileName: selectedFile.name,
-                        hasPasscode: !!passcode,
-                        expireDate: expireDate,
-                    };
-                    addFileToList(newFile);
-                    setRecentUploadUrl(result.shortUrl); // UPDATE: Set the URL to be highlighted
-                    setLastResult(result); // UPDATE: Set the result to show the copy box
+                    // Stage 1: Initiate upload
+                    const initResponse = await fetch('/api/upload/initiate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fileName: selectedFile.name, fileType: selectedFile.type })
+                    });
+                    if (!initResponse.ok) throw new Error('Could not start upload session.');
+                    const { uploadUrl, newFileName } = await initResponse.json();
 
+                    // Stage 2: Upload file directly to Google
+                    await new Promise((resolve, reject) => {
+                        const xhr = new XMLHttpRequest();
+                        xhr.open('PUT', uploadUrl, true);
+                        xhr.setRequestHeader('Content-Type', selectedFile.type);
+
+                        xhr.upload.onprogress = (event) => {
+                            if (event.lengthComputable) {
+                                const percentComplete = Math.round((event.loaded / event.total) * 100);
+                                setProgress(percentComplete);
+                            }
+                        };
+
+                        xhr.onload = () => {
+                            if (xhr.status >= 200 && xhr.status < 300) {
+                                resolve(xhr.response);
+                            } else {
+                                reject(new Error(`Upload failed with status: ${xhr.status}`));
+                            }
+                        };
+                        xhr.onerror = () => reject(new Error('Upload failed due to a network error.'));
+                        xhr.send(selectedFile);
+                    });
+                    
+                    const googleResponse = await fetch(uploadUrl, { method: 'PUT', body: selectedFile });
+                    const uploadedFile = await googleResponse.json();
+
+                    // Stage 3: Finalize upload
+                    const finalizeResponse = await fetch('/api/upload/finalize', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            fileId: uploadedFile.id,
+                            fileName: newFileName,
+                            originalName: selectedFile.name,
+                            passcode,
+                            expireDate
+                        })
+                    });
+                    
+                    const finalResult = await finalizeResponse.json();
+                    if (!finalizeResponse.ok) throw new Error(finalResult.error || 'Failed to finalize upload.');
+
+                    addFileToList(finalResult.fileMeta);
+                    setRecentUploadUrl(finalResult.shortUrl);
+                    setLastResult(finalResult);
+                    
                     // Reset form
                     setSelectedFile(null);
                     setPasscode('');
                     setExpireDate('');
+
                 } catch (err) {
                     setError(err.message);
                 } finally {
-                    clearInterval(progressInterval);
-                    setTimeout(() => {
-                        setIsUploading(false);
-                        setProgress(0);
-                    }, 1500);
+                    setIsUploading(false);
+                    setProgress(0);
                 }
             };
 
