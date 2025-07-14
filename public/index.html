@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Decentralized File Share</title>
+    <title>ဒီဖိုင် : Your Files, Your Privacy, Your Drive.</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -230,8 +230,7 @@
                     if (!initResponse.ok) throw new Error('Could not start upload session.');
                     const { uploadUrl, newFileName } = await initResponse.json();
 
-                    // Stage 2: Upload file directly to Google and get response
-                    // FIX: This block is now self-contained and handles the entire upload and response parsing.
+                    // Stage 2: Upload file directly to Google
                     const uploadedFile = await new Promise((resolve, reject) => {
                         const xhr = new XMLHttpRequest();
                         xhr.open('PUT', uploadUrl, true);
@@ -246,7 +245,6 @@
 
                         xhr.onload = () => {
                             if (xhr.status >= 200 && xhr.status < 300) {
-                                // The response from a successful resumable upload is the file metadata JSON
                                 resolve(JSON.parse(xhr.response));
                             } else {
                                 reject(new Error(`Upload failed with status: ${xhr.status}`));
