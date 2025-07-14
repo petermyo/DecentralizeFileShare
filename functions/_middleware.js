@@ -4,8 +4,7 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version implements a secure, private download model with passcode,
- * expiration date support, and a file deletion endpoint.
+ * This version adds the ability to create and share lists of files.
  *
  */
 
@@ -32,17 +31,23 @@ export const onRequest = async (context) => {
         return handleApiRequest(request, env);
     }
 
-    // Route short URL redirects
+    // Route short URL redirects for individual files
     if (path.startsWith('/s/')) {
-        if (request.method === 'GET') {
-            return handleShortUrlGet(request, env);
+        return handleShortUrlGet(request, env);
+    }
+    
+    // UPDATE: Route short URL redirects for lists
+    if (path.startsWith('/l/')) {
+         if (request.method === 'GET') {
+            return handleListGet(request, env);
         }
         if (request.method === 'POST') {
-            return handleShortUrlPost(request, env);
+            return handleListPost(request, env);
         }
     }
 
-    // For all other requests, pass through to the static asset handler
+
+    // For all other requests, pass through to the static asset handler (serves the frontend)
     return next();
 }
 
@@ -73,6 +78,13 @@ async function handleApiRequest(request, env) {
             return handleDelete(request, env);
         case '/api/file/update':
             return handleFileUpdate(request, env);
+        // UPDATE: New endpoints for lists
+        case '/api/lists/create':
+            return handleListCreate(request, env);
+        case '/api/lists':
+            return getListsHistory(request, env);
+        case '/api/list/data':
+             return getListData(request, env);
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
@@ -268,7 +280,7 @@ async function handleUploadFinalize(request, env) {
             fileId, fileName, originalName,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
-            passcode: passcode || null, // UPDATE: Store the actual passcode
+            passcode: passcode || null,
             expireDate: expireDate || null,
             size: fileSize
         };
@@ -299,7 +311,7 @@ async function handleShortUrlGet(request, env) {
     }
 
     if (fileData.passcode) {
-        return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPasscodePage(shortCode, fileData.name, false, false), { headers: { 'Content-Type': 'text/html' } });
     }
 
     return streamFile(fileData, env);
@@ -319,7 +331,7 @@ async function handleShortUrlPost(request, env) {
     if (fileData.passcode && submittedPasscode === fileData.passcode) {
         return streamFile(fileData, env);
     } else {
-        return new Response(getPasscodePage(shortCode, fileData.name, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPasscodePage(shortCode, fileData.name, true, false), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
 }
 
@@ -405,7 +417,6 @@ async function handleDelete(request, env) {
 async function handleFileUpdate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
-        // The `passcode` property will be undefined if the user didn't change it.
         const { shortUrl, passcode, expireDate } = await request.json();
 
         if (!shortUrl) {
@@ -423,11 +434,8 @@ async function handleFileUpdate(request, env) {
             return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
         }
 
-        // UPDATE: Only update properties if they were included in the request.
-        let hasPasscodeChanged = false;
         if (passcode !== undefined) {
             fileData.passcode = passcode || null;
-            hasPasscodeChanged = true;
         }
         if (expireDate !== undefined) {
              fileData.expireDate = expireDate || null;
@@ -440,7 +448,7 @@ async function handleFileUpdate(request, env) {
         const updatedHistory = fileHistory.map(file => {
             if (file.shortUrl === shortUrl) {
                 const updatedFile = { ...file };
-                if (hasPasscodeChanged) {
+                if (passcode !== undefined) {
                     updatedFile.hasPasscode = !!passcode;
                     updatedFile.passcode = passcode || null;
                 }
@@ -462,6 +470,105 @@ async function handleFileUpdate(request, env) {
     }
 }
 
+// UPDATE: New handlers for lists
+async function handleListCreate(request, env) {
+    try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const { fileIds, passcode, expireDate } = await request.json();
+
+        if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
+            return new Response(JSON.stringify({ error: "No files selected for the list." }), { status: 400 });
+        }
+
+        const historyKey = `history:upload:${userId}`;
+        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        
+        const listFiles = fileHistory.filter(file => fileIds.includes(file.fileId));
+        if (listFiles.length !== fileIds.length) {
+            return new Response(JSON.stringify({ error: "Some selected files were not found or you do not have permission." }), { status: 403 });
+        }
+
+        const shortCode = Math.random().toString(36).substring(2, 8);
+        const listShortUrl = `${new URL(request.url).origin}/l/${shortCode}`;
+
+        const listData = {
+            files: listFiles,
+            ownerId: userId,
+            passcode: passcode || null,
+            expireDate: expireDate || null,
+        };
+        await env.APP_KV.put(`list:${shortCode}`, JSON.stringify(listData), { expirationTtl: 60 * 60 * 24 * 90 }); // 90-day expiry
+
+        const listHistoryKey = `history:list:${userId}`;
+        const existingListHistory = await env.APP_KV.get(listHistoryKey, { type: 'json' }) || [];
+        existingListHistory.push({
+            shortUrl: listShortUrl,
+            fileCount: listFiles.length,
+            createdAt: new Date().toISOString(),
+            passcode: !!passcode,
+            expireDate: expireDate || null
+        });
+        await env.APP_KV.put(listHistoryKey, JSON.stringify(existingListHistory));
+
+        return new Response(JSON.stringify({ shortUrl: listShortUrl }), { status: 200 });
+    } catch (err) {
+        if (err instanceof Response) return err;
+        console.error('List creation error:', err.message);
+        return new Response(JSON.stringify({ error: 'Failed to create list.', details: err.message }), { status: 500 });
+    }
+}
+
+async function getListsHistory(request, env) {
+     try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const historyKey = `history:list:${userId}`;
+        const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        return new Response(JSON.stringify(listHistory.reverse()), { headers: { 'Content-Type': 'application/json' } });
+    } catch (err) {
+        if (err instanceof Response) return err;
+        return new Response(JSON.stringify({ error: "Could not fetch list history." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+}
+
+async function getListData(request, env) {
+    const url = new URL(request.url);
+    const shortCode = url.searchParams.get('id');
+    if (!shortCode) return new Response('Missing list ID.', { status: 400 });
+
+    const listData = await env.APP_KV.get(`list:${shortCode}`, { type: 'json' });
+    if (!listData) return new Response('List not found or expired.', { status: 404 });
+    
+    if (listData.expireDate && new Date(listData.expireDate) < new Date()) {
+        return new Response('This list has expired.', { status: 403 });
+    }
+
+    if (listData.passcode) {
+        return new Response(JSON.stringify({ isProtected: true, fileName: `${listData.files.length} files` }), { status: 200 });
+    }
+
+    return new Response(JSON.stringify({ isProtected: false, files: listData.files }), { status: 200 });
+}
+
+async function handleListGet(request, env) {
+    // This just serves the main HTML page. React will handle fetching the data.
+    return env.ASSETS.fetch(request);
+}
+
+async function handleListPost(request, env) {
+    const url = new URL(request.url);
+    const shortCode = url.pathname.split('/l/')[1];
+    const listData = await env.APP_KV.get(`list:${shortCode}`, { type: 'json' });
+    if (!listData) return new Response('List not found or expired.', { status: 404 });
+
+    const formData = await request.formData();
+    const submittedPasscode = formData.get('passcode');
+
+    if (listData.passcode && submittedPasscode === listData.passcode) {
+        return new Response(JSON.stringify({ isProtected: false, files: listData.files }), { status: 200 });
+    } else {
+        return new Response(JSON.stringify({ error: 'Incorrect passcode' }), { status: 401 });
+    }
+}
 
 // --- Helper Functions ---
 async function getValidAccessToken(tokenData, userId, env) {
@@ -535,7 +642,8 @@ async function streamFile(fileData, env) {
     }
 }
 
-function getPasscodePage(shortCode, fileName, hasError = false) {
+function getPasscodePage(shortCode, fileName, hasError = false, isList = false) {
+    const actionUrl = isList ? `/l/${shortCode}` : `/s/${shortCode}`;
     const errorMessage = hasError ? `<p class="text-red-500 text-sm mb-4">Incorrect passcode. Please try again.</p>` : '';
     return `
         <!DOCTYPE html>
@@ -549,15 +657,15 @@ function getPasscodePage(shortCode, fileName, hasError = false) {
         <body class="bg-gray-100 flex items-center justify-center min-h-screen">
             <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
                 <h2 class="text-2xl font-bold text-center text-gray-800">Passcode Required</h2>
-                <p class="text-center text-gray-600">This file is protected. Please enter the passcode to download:</p>
+                <p class="text-center text-gray-600">This content is protected. Please enter the passcode to continue:</p>
                 <p class="text-center text-gray-800 font-semibold break-all">${fileName}</p>
-                <form method="POST" action="/s/${shortCode}">
+                <form method="POST" action="${actionUrl}">
                     ${errorMessage}
                     <input type="password" name="passcode" placeholder="Enter passcode" required
                            class="w-full px-4 py-2 mb-4 text-gray-700 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <button type="submit"
                             class="w-full px-4 py-2 font-bold text-white bg-blue-500 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        Download
+                        Access
                     </button>
                 </form>
             </div>
