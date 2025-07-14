@@ -36,6 +36,8 @@
             const [user, setUser] = useState(null);
             const [isLoading, setIsLoading] = useState(true);
             const [files, setFiles] = useState([]);
+            const [lists, setLists] = useState([]);
+            const [view, setView] = useState('files');
 
             // --- Check Login Status on Load ---
             useEffect(() => {
@@ -55,27 +57,33 @@
                 checkUserStatus();
             }, []);
             
-            // --- Fetch File History on Login ---
-            const fetchFiles = useCallback(async () => {
+            // --- Fetch Data on Login ---
+            const fetchData = useCallback(async () => {
                 if (user) {
                     try {
-                        const response = await fetch('/api/files');
-                        const data = await response.json();
-                        setFiles(data);
+                        const [filesRes, listsRes] = await Promise.all([
+                            fetch('/api/files'),
+                            fetch('/api/lists')
+                        ]);
+                        const filesData = await filesRes.json();
+                        const listsData = await listsRes.json();
+                        setFiles(filesData);
+                        setLists(listsData);
                     } catch (err) {
-                        console.error("Failed to fetch files:", err);
+                        console.error("Failed to fetch data:", err);
                     }
                 }
             }, [user]);
 
             useEffect(() => {
-                fetchFiles();
-            }, [fetchFiles]);
+                fetchData();
+            }, [fetchData]);
 
             const handleLogout = async () => {
                 await fetch('/api/logout', { method: 'POST' });
                 setUser(null);
                 setFiles([]);
+                setLists([]);
             };
             
             const addFileToList = (newFile) => {
@@ -118,7 +126,16 @@
                     
                     <main className="container mx-auto p-4 sm:p-6 lg:p-8">
                         {user ? (
-                            <MainLayout files={files} addFileToList={addFileToList} onFileDelete={handleFileDelete} onFileUpdate={handleFileUpdate} />
+                            <MainLayout 
+                                files={files} 
+                                lists={lists}
+                                view={view}
+                                setView={setView}
+                                addFileToList={addFileToList} 
+                                onFileDelete={handleFileDelete} 
+                                onFileUpdate={handleFileUpdate}
+                                onListCreated={fetchData}
+                            />
                         ) : (
                             <LoginScreen />
                         )}
@@ -131,7 +148,7 @@
         }
         
         const LoginScreen = () => (
-            <div className="text-center max-w-4xl mx-auto mt-10 md:mt-10 p-8 animate-fade-in">
+            <div className="text-center max-w-4xl mx-auto mt-10 md:mt-10 p-5 animate-fade-in">
                 <h1 className="text-4xl md:text-8xl font-bold text-sky-600 mb-7 tracking-tighter">ဒီဖိုင်</h1>
                 <h2 className="text-2xl md:text-3xl font-medium text-slate-700 mb-6">Your Files, Your Privacy, Your Drive.</h2>
                 <p className="text-slate-600 max-w-2xl mx-auto mb-10">
@@ -160,10 +177,12 @@
             </div>
         );
         
-        const MainLayout = ({ files, addFileToList, onFileDelete, onFileUpdate }) => {
+        const MainLayout = ({ files, lists, view, setView, addFileToList, onFileDelete, onFileUpdate, onListCreated }) => {
             const [recentUploadUrl, setRecentUploadUrl] = useState(null);
             const [editingFile, setEditingFile] = useState(null);
             const [deletingFile, setDeletingFile] = useState(null);
+            const [selectedFileIds, setSelectedFileIds] = useState([]);
+            const [isCreatingList, setIsCreatingList] = useState(false);
 
             useEffect(() => {
                 if (recentUploadUrl) {
@@ -181,7 +200,31 @@
                             <UploadForm addFileToList={addFileToList} setRecentUploadUrl={setRecentUploadUrl} />
                         </div>
                         <div className="lg:col-span-8">
-                            <FileTable files={files} onFileDelete={onFileDelete} onEditFile={setEditingFile} onDeleteFile={setDeletingFile} recentUploadUrl={recentUploadUrl} />
+                            <div className="mb-4 border-b border-slate-200">
+                                <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+                                    <button onClick={() => setView('files')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${view === 'files' ? 'border-sky-500 text-sky-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>
+                                        My Files
+                                    </button>
+                                    <button onClick={() => setView('lists')} className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${view === 'lists' ? 'border-sky-500 text-sky-600' : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>
+                                        My Lists
+                                    </button>
+                                </nav>
+                            </div>
+
+                            {view === 'files' ? (
+                                <FileTable 
+                                    files={files} 
+                                    onFileDelete={onFileDelete} 
+                                    onEditFile={setEditingFile} 
+                                    onDeleteFile={setDeletingFile} 
+                                    recentUploadUrl={recentUploadUrl}
+                                    selectedFileIds={selectedFileIds}
+                                    setSelectedFileIds={setSelectedFileIds}
+                                    onOpenCreateList={() => setIsCreatingList(true)}
+                                />
+                            ) : (
+                                <ListsTable lists={lists} />
+                            )}
                         </div>
                     </div>
                     {editingFile && (
@@ -191,6 +234,18 @@
                             onUpdate={(updatedFile) => {
                                 onFileUpdate(updatedFile);
                                 setEditingFile(null);
+                            }}
+                        />
+                    )}
+                     {isCreatingList && (
+                        <CreateListModal
+                            fileIds={selectedFileIds}
+                            onClose={() => setIsCreatingList(false)}
+                            onCreated={() => {
+                                onListCreated();
+                                setSelectedFileIds([]);
+                                setIsCreatingList(false);
+                                setView('lists');
                             }}
                         />
                     )}
@@ -384,9 +439,10 @@
             );
         }
         
-        const FileTable = ({ files, onFileDelete, onEditFile, onDeleteFile, recentUploadUrl }) => {
+        const FileTable = ({ files, onFileDelete, onEditFile, onDeleteFile, recentUploadUrl, selectedFileIds, setSelectedFileIds, onOpenCreateList }) => {
             const [copySuccess, setCopySuccess] = useState('');
             const [currentPage, setCurrentPage] = useState(1);
+            const [searchTerm, setSearchTerm] = useState('');
             const ITEMS_PER_PAGE = 10;
 
             const handleCopy = (url) => {
@@ -395,11 +451,21 @@
                 setTimeout(() => setCopySuccess(''), 2000);
             };
             
-            const paginatedFiles = files.slice(
+             const handleSelectFile = (fileId) => {
+                setSelectedFileIds(prev => 
+                    prev.includes(fileId) ? prev.filter(id => id !== fileId) : [...prev, fileId]
+                );
+            };
+
+            const filteredFiles = files.filter(file => 
+                file.fileName.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
+            const paginatedFiles = filteredFiles.slice(
                 (currentPage - 1) * ITEMS_PER_PAGE,
                 currentPage * ITEMS_PER_PAGE
             );
-            const pageCount = Math.ceil(files.length / ITEMS_PER_PAGE);
+            const pageCount = Math.ceil(filteredFiles.length / ITEMS_PER_PAGE);
             
             const formatBytes = (bytes, decimals = 2) => {
                 if (!bytes || bytes === 0) return '0 Bytes';
@@ -421,17 +487,28 @@
             
             return (
                  <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
-                    <div className="flex justify-between items-center mb-4">
+                    <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
                         <h3 className="text-xl font-bold text-slate-800">My Files</h3>
-                        <div className="relative h-[90px] w-full max-w-[728px] bg-slate-200 flex items-center justify-center text-slate-400 text-sm overflow-hidden hidden lg:flex">
-                            <img src="https://placehold.co/728x90/e2e8f0/94a3b8?text=Ad+Banner" alt="Advertisement" className="w-full h-full object-cover" />
-                            <span className="absolute top-1 right-1 bg-slate-500 text-white text-xs px-1.5 py-0.5 rounded">ads</span>
+                        <div className="w-full md:w-auto">
+                             <input 
+                                type="search"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Search files..."
+                                className="w-full md:w-64 px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"
+                            />
                         </div>
+                        {selectedFileIds.length > 0 && (
+                            <button onClick={onOpenCreateList} className="bg-sky-500 text-white font-semibold py-2 px-4 rounded-lg text-sm">
+                                Create List ({selectedFileIds.length})
+                            </button>
+                        )}
                     </div>
                     <div className="hidden md:block">
                         <table className="min-w-full divide-y divide-slate-200">
                             <thead className="bg-slate-50">
                                 <tr>
+                                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider"></th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">File Name</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Size</th>
                                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Link</th>
@@ -443,6 +520,7 @@
                             <tbody className="bg-white divide-y divide-slate-200">
                                 {paginatedFiles.map((file, index) => (
                                     <tr key={file.fileId || index} className={file.shortUrl === recentUploadUrl ? 'highlight-row' : ''}>
+                                        <td className="px-6 py-4"><input type="checkbox" checked={selectedFileIds.includes(file.fileId)} onChange={() => handleSelectFile(file.fileId)} className="h-4 w-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500"/></td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900 truncate max-w-xs">{file.fileName}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{formatBytes(file.size)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
@@ -476,13 +554,18 @@
                     <div className="md:hidden space-y-4 mt-4">
                         {paginatedFiles.map((file, index) => (
                              <div key={file.fileId || index} className={`bg-white p-4 rounded-lg shadow border ${file.shortUrl === recentUploadUrl ? 'border-sky-300' : 'border-slate-200'}`}>
-                                <div className="font-semibold text-slate-800 truncate">{file.fileName}</div>
-                                <div className="text-sm text-slate-500 mt-1">Size: {formatBytes(file.size)}</div>
-                                <div className="text-sm text-slate-500">Expires: {file.expireDate || 'Never'}</div>
-                                <div className="mt-2">
-                                    {file.hasPasscode ? 
-                                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Passcode</span> : 
-                                        <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">None</span>}
+                                <div className="flex items-start space-x-4">
+                                    <input type="checkbox" checked={selectedFileIds.includes(file.fileId)} onChange={() => handleSelectFile(file.fileId)} className="mt-1 h-4 w-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500"/>
+                                    <div className="flex-1">
+                                        <div className="font-semibold text-slate-800 truncate">{file.fileName}</div>
+                                        <div className="text-sm text-slate-500 mt-1">Size: {formatBytes(file.size)}</div>
+                                        <div className="text-sm text-slate-500">Expires: {file.expireDate || 'Never'}</div>
+                                        <div className="mt-2">
+                                            {file.hasPasscode ? 
+                                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Passcode</span> : 
+                                                <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">None</span>}
+                                        </div>
+                                    </div>
                                 </div>
                                 <div className="mt-4 pt-4 border-t border-slate-200 flex justify-between items-center">
                                     <a href={file.shortUrl} target="_blank" className="text-sky-600 hover:text-sky-800 font-semibold">Download</a>
