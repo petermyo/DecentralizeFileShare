@@ -4,8 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version implements a robust, two-stage upload process to handle
- * large files without timing out the serverless function.
+ * This version implements a fix for the persistent CORS issue by adding
+ * an 'Origin' header to the initial upload request to Google Drive.
  *
  */
 
@@ -59,7 +59,6 @@ async function handleApiRequest(request, env) {
             return handleLogin(request, env);
         case '/api/auth/google/callback':
             return handleCallback(request, env);
-        // UPDATE: Re-implementing two-stage upload endpoints
         case '/api/upload/initiate':
             return handleUploadInitiate(request, env);
         case '/api/upload/finalize':
@@ -191,7 +190,6 @@ async function handleCallback(request, env) {
     }
 }
 
-// UPDATE: New two-stage upload logic
 async function handleUploadInitiate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
@@ -217,12 +215,16 @@ async function handleUploadInitiate(request, env) {
             parents: [folderId],
             mimeType: fileType,
         };
+        
+        // UPDATE: Add the Origin header to the initiation request
+        const requestOrigin = new URL(request.url).origin;
 
         const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${accessToken}`,
                 'Content-Type': 'application/json; charset=UTF-8',
+                'Origin': requestOrigin,
             },
             body: JSON.stringify(metadata)
         });
