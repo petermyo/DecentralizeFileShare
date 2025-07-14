@@ -4,8 +4,7 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version adds the ability to edit the passcode and expiration
- * for previously created file lists.
+ * This version adds a public-facing view for shared file lists.
  *
  */
 
@@ -27,28 +26,19 @@ export const onRequest = async (context) => {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Route API requests
+    // API requests are handled by a dedicated function
     if (path.startsWith('/api/')) {
         return handleApiRequest(request, env);
     }
 
-    // Route short URL redirects for individual files
+    // Short URL for single files
     if (path.startsWith('/s/')) {
         return handleShortUrlGet(request, env);
     }
     
-    // Route short URL redirects for lists
-    if (path.startsWith('/l/')) {
-         if (request.method === 'GET') {
-            return handleListGet(request, env);
-        }
-        if (request.method === 'POST') {
-            return handleListPost(request, env);
-        }
-    }
-
-
-    // For all other requests, pass through to the static asset handler
+    // For list URLs (/l/...) or any other path, let the frontend handle routing.
+    // The 'next()' function passes the request to the static asset handler,
+    // which will serve the main index.html file.
     return next();
 }
 
@@ -83,11 +73,9 @@ async function handleApiRequest(request, env) {
             return handleListCreate(request, env);
         case '/api/lists':
             return getListsHistory(request, env);
+        // UPDATE: New endpoint to get public data for a list
         case '/api/list/data':
              return getListData(request, env);
-        // UPDATE: New endpoint to handle list updates
-        case '/api/list/update':
-            return handleListUpdate(request, env);
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
