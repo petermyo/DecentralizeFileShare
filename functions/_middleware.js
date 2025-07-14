@@ -268,6 +268,7 @@ async function handleUploadFinalize(request, env) {
             fileId, fileName, originalName,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
+            passcode: passcode || null, // UPDATE: Store the actual passcode
             expireDate: expireDate || null,
             size: fileSize
         };
@@ -401,11 +402,10 @@ async function handleDelete(request, env) {
     }
 }
 
-// UPDATE: New handler for updating file settings
 async function handleFileUpdate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
-        // `passcode` will be undefined if not sent by the frontend
+        // The `passcode` property will be undefined if the user didn't change it.
         const { shortUrl, passcode, expireDate } = await request.json();
 
         if (!shortUrl) {
@@ -423,9 +423,11 @@ async function handleFileUpdate(request, env) {
             return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
         }
 
-        // Conditionally update properties
+        // UPDATE: Only update properties if they were included in the request.
+        let hasPasscodeChanged = false;
         if (passcode !== undefined) {
             fileData.passcode = passcode || null;
+            hasPasscodeChanged = true;
         }
         if (expireDate !== undefined) {
              fileData.expireDate = expireDate || null;
@@ -438,8 +440,9 @@ async function handleFileUpdate(request, env) {
         const updatedHistory = fileHistory.map(file => {
             if (file.shortUrl === shortUrl) {
                 const updatedFile = { ...file };
-                if (passcode !== undefined) {
+                if (hasPasscodeChanged) {
                     updatedFile.hasPasscode = !!passcode;
+                    updatedFile.passcode = passcode || null;
                 }
                 if (expireDate !== undefined) {
                     updatedFile.expireDate = expireDate || null;
