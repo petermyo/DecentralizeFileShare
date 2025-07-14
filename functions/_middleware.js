@@ -5,7 +5,7 @@
  * =================================================================================
  *
  * This version implements a secure, private download model with passcode,
- * expiration date support, and file editing/deletion endpoints.
+ * expiration date support, and a file deletion endpoint.
  *
  */
 
@@ -13,7 +13,8 @@
 import * as jose from 'jose';
 
 // --- Constants ---
-const FOLDER_NAME = "Decentralized File Share";
+// UPDATE: Changed the folder name as requested.
+const FOLDER_NAME = "D File Advance File Sharing";
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
@@ -71,7 +72,6 @@ async function handleApiRequest(request, env) {
              return getFileHistory(request, env);
         case '/api/delete':
             return handleDelete(request, env);
-        // UPDATE: New endpoint to handle file updates
         case '/api/file/update':
             return handleFileUpdate(request, env);
     }
@@ -401,7 +401,6 @@ async function handleDelete(request, env) {
     }
 }
 
-// UPDATE: New handler for updating file settings
 async function handleFileUpdate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
@@ -418,17 +417,14 @@ async function handleFileUpdate(request, env) {
             return new Response(JSON.stringify({ error: "File not found" }), { status: 404 });
         }
         
-        // Security check: ensure the person editing is the owner
         if (fileData.ownerId !== userId) {
             return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
         }
 
-        // Update the file data
         fileData.passcode = passcode || null;
         fileData.expireDate = expireDate || null;
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
         
-        // Update the history record as well
         const historyKey = `history:upload:${userId}`;
         const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = fileHistory.map(file => {
