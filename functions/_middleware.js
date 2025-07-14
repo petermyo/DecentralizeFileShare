@@ -4,8 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version implements a fix for the persistent CORS issue by adding
- * an 'Origin' header to the initial upload request to Google Drive.
+ * This version implements a secure, private download model with passcode,
+ * expiration date support, and file editing/deletion endpoints.
  *
  */
 
@@ -71,6 +71,9 @@ async function handleApiRequest(request, env) {
              return getFileHistory(request, env);
         case '/api/delete':
             return handleDelete(request, env);
+        // UPDATE: New endpoint to handle file updates
+        case '/api/file/update':
+            return handleFileUpdate(request, env);
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
@@ -216,7 +219,6 @@ async function handleUploadInitiate(request, env) {
             mimeType: fileType,
         };
         
-        // UPDATE: Add the Origin header to the initiation request
         const requestOrigin = new URL(request.url).origin;
 
         const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
@@ -396,6 +398,53 @@ async function handleDelete(request, env) {
         if (err instanceof Response) return err;
         console.error('Delete error:', err.message);
         return new Response(JSON.stringify({ error: 'Failed to delete file.', details: err.message }), { status: 500 });
+    }
+}
+
+// UPDATE: New handler for updating file settings
+async function handleFileUpdate(request, env) {
+    try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const { shortUrl, passcode, expireDate } = await request.json();
+
+        if (!shortUrl) {
+            return new Response(JSON.stringify({ error: "Missing shortUrl" }), { status: 400 });
+        }
+
+        const shortCode = shortUrl.split('/s/')[1];
+        const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+
+        if (!fileData) {
+            return new Response(JSON.stringify({ error: "File not found" }), { status: 404 });
+        }
+        
+        // Security check: ensure the person editing is the owner
+        if (fileData.ownerId !== userId) {
+            return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+        }
+
+        // Update the file data
+        fileData.passcode = passcode || null;
+        fileData.expireDate = expireDate || null;
+        await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
+        
+        // Update the history record as well
+        const historyKey = `history:upload:${userId}`;
+        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const updatedHistory = fileHistory.map(file => {
+            if (file.shortUrl === shortUrl) {
+                return { ...file, hasPasscode: !!passcode, expireDate: expireDate || null };
+            }
+            return file;
+        });
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true, message: 'File updated successfully.' }), { status: 200 });
+
+    } catch (err) {
+        if (err instanceof Response) return err;
+        console.error('File update error:', err.message);
+        return new Response(JSON.stringify({ error: 'Failed to update file.', details: err.message }), { status: 500 });
     }
 }
 

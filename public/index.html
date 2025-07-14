@@ -80,6 +80,12 @@
             const handleFileDelete = (fileId) => {
                 setFiles(prevFiles => prevFiles.filter(file => file.fileId !== fileId));
             }
+            
+            const handleFileUpdate = (updatedFile) => {
+                setFiles(prevFiles => prevFiles.map(file => 
+                    file.fileId === updatedFile.fileId ? { ...file, ...updatedFile } : file
+                ));
+            };
 
             // --- Render Logic ---
             if (isLoading) {
@@ -105,7 +111,7 @@
                     
                     <main className="p-4 md:p-8">
                         {user ? (
-                            <MainLayout files={files} addFileToList={addFileToList} onFileDelete={handleFileDelete} />
+                            <MainLayout files={files} addFileToList={addFileToList} onFileDelete={handleFileDelete} onFileUpdate={handleFileUpdate} />
                         ) : (
                             <LoginScreen />
                         )}
@@ -147,8 +153,9 @@
             </div>
         );
         
-        const MainLayout = ({ files, addFileToList, onFileDelete }) => {
+        const MainLayout = ({ files, addFileToList, onFileDelete, onFileUpdate }) => {
             const [recentUploadUrl, setRecentUploadUrl] = useState(null);
+            const [editingFile, setEditingFile] = useState(null);
 
             useEffect(() => {
                 if (recentUploadUrl) {
@@ -160,14 +167,26 @@
             }, [recentUploadUrl]);
 
             return (
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
-                    <div className="lg:col-span-1">
-                        <UploadForm addFileToList={addFileToList} setRecentUploadUrl={setRecentUploadUrl} />
+                <>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-fade-in">
+                        <div className="lg:col-span-1">
+                            <UploadForm addFileToList={addFileToList} setRecentUploadUrl={setRecentUploadUrl} />
+                        </div>
+                        <div className="lg:col-span-2">
+                            <FileTable files={files} onFileDelete={onFileDelete} onEditFile={setEditingFile} recentUploadUrl={recentUploadUrl} />
+                        </div>
                     </div>
-                    <div className="lg:col-span-2">
-                        <FileTable files={files} onFileDelete={onFileDelete} recentUploadUrl={recentUploadUrl} />
-                    </div>
-                </div>
+                    {editingFile && (
+                        <EditModal 
+                            file={editingFile} 
+                            onClose={() => setEditingFile(null)} 
+                            onUpdate={(updatedFile) => {
+                                onFileUpdate(updatedFile);
+                                setEditingFile(null);
+                            }}
+                        />
+                    )}
+                </>
             );
         };
         
@@ -221,7 +240,6 @@
                 setProgress(0);
 
                 try {
-                    // Stage 1: Initiate upload
                     const initResponse = await fetch('/api/upload/initiate', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -230,7 +248,6 @@
                     if (!initResponse.ok) throw new Error('Could not start upload session.');
                     const { uploadUrl, newFileName } = await initResponse.json();
 
-                    // Stage 2: Upload file directly to Google
                     const uploadedFile = await new Promise((resolve, reject) => {
                         const xhr = new XMLHttpRequest();
                         xhr.open('PUT', uploadUrl, true);
@@ -254,7 +271,6 @@
                         xhr.send(selectedFile);
                     });
 
-                    // Stage 3: Finalize upload
                     const finalizeResponse = await fetch('/api/upload/finalize', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -349,7 +365,7 @@
             );
         }
         
-        const FileTable = ({ files, onFileDelete, recentUploadUrl }) => {
+        const FileTable = ({ files, onFileDelete, onEditFile, recentUploadUrl }) => {
             const [copySuccess, setCopySuccess] = useState('');
 
             const handleCopy = (url) => {
@@ -405,7 +421,7 @@
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">{file.fileName}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             <button onClick={() => handleCopy(file.shortUrl)} className="text-blue-600 hover:text-blue-800">
-                                                {copySuccess === file.shortUrl ? 'Copied!' : 'Copy Link'}
+                                                {copySuccess === file.shortUrl ? 'Copied!' : 'Copy'}
                                             </button>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{file.expireDate || 'Never'}</td>
@@ -414,8 +430,13 @@
                                                 <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">Passcode</span> : 
                                                 <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">None</span>}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            <button onClick={() => handleDeleteClick(file)} className="text-red-600 hover:text-red-800">Delete</button>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 flex items-center space-x-3">
+                                            <button onClick={() => onEditFile(file)} title="Edit" className="text-gray-400 hover:text-blue-600">
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                            </button>
+                                            <button onClick={() => handleDeleteClick(file)} title="Delete" className="text-gray-400 hover:text-red-600">
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}
@@ -425,6 +446,61 @@
                 </div>
             );
         }
+        
+        const EditModal = ({ file, onClose, onUpdate }) => {
+            const [passcode, setPasscode] = useState(file.hasPasscode ? '******' : ''); // Don't show real passcode
+            const [expireDate, setExpireDate] = useState(file.expireDate || '');
+            const [isSaving, setIsSaving] = useState(false);
+            const [error, setError] = useState('');
+
+            const handleSave = async (e) => {
+                e.preventDefault();
+                setIsSaving(true);
+                setError('');
+                try {
+                    const response = await fetch('/api/file/update', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            shortUrl: file.shortUrl,
+                            passcode: passcode === '******' ? null : passcode, // Send null if unchanged
+                            expireDate: expireDate
+                        })
+                    });
+                    if (!response.ok) throw new Error('Failed to update file.');
+                    onUpdate({ ...file, hasPasscode: !!passcode, expireDate });
+                } catch(err) {
+                    setError(err.message);
+                } finally {
+                    setIsSaving(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+                        <h3 className="text-lg font-bold text-gray-800 mb-4">Edit File: {file.fileName}</h3>
+                        <form onSubmit={handleSave} className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">New Passcode (Optional)</label>
+                                <input type="password" value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="Leave blank to remove" className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"/>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">New Expiration Date (Optional)</label>
+                                <input type="date" value={expireDate} onChange={e => setExpireDate(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"/>
+                            </div>
+                            {error && <p className="text-sm text-red-600">{error}</p>}
+                            <div className="flex justify-end space-x-3 pt-4">
+                                <button type="button" onClick={onClose} className="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-2 px-4 rounded-lg text-sm transition">Cancel</button>
+                                <button type="submit" disabled={isSaving} className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg text-sm transition disabled:bg-gray-400">
+                                    {isSaving ? 'Saving...' : 'Save Changes'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        };
 
         ReactDOM.createRoot(document.getElementById('root')).render(<App />);
     </script>
