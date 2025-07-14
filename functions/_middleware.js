@@ -13,7 +13,6 @@
 import * as jose from 'jose';
 
 // --- Constants ---
-// UPDATE: Changed the folder name as requested.
 const FOLDER_NAME = "D File Advance File Sharing";
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -248,7 +247,8 @@ async function handleUploadInitiate(request, env) {
 async function handleUploadFinalize(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
-        const { fileId, fileName, originalName, passcode, expireDate } = await request.json();
+        // UPDATE: Receive fileSize from the frontend
+        const { fileId, fileName, originalName, passcode, expireDate, fileSize } = await request.json();
 
         if (!fileId || !fileName || !originalName) {
             return new Response(JSON.stringify({ error: 'Missing required file data for finalization.' }), { status: 400 });
@@ -269,7 +269,8 @@ async function handleUploadFinalize(request, env) {
             fileId, fileName, originalName,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
-            expireDate: expireDate || null
+            expireDate: expireDate || null,
+            size: fileSize // UPDATE: Store the file size
         };
         const historyKey = `history:upload:${userId}`;
         const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
