@@ -247,7 +247,6 @@ async function handleUploadInitiate(request, env) {
 async function handleUploadFinalize(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
-        // UPDATE: Receive fileSize from the frontend
         const { fileId, fileName, originalName, passcode, expireDate, fileSize } = await request.json();
 
         if (!fileId || !fileName || !originalName) {
@@ -270,7 +269,7 @@ async function handleUploadFinalize(request, env) {
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
             expireDate: expireDate || null,
-            size: fileSize // UPDATE: Store the file size
+            size: fileSize
         };
         const historyKey = `history:upload:${userId}`;
         const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
@@ -402,9 +401,11 @@ async function handleDelete(request, env) {
     }
 }
 
+// UPDATE: New handler for updating file settings
 async function handleFileUpdate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
+        // `passcode` will be undefined if not sent by the frontend
         const { shortUrl, passcode, expireDate } = await request.json();
 
         if (!shortUrl) {
@@ -422,15 +423,28 @@ async function handleFileUpdate(request, env) {
             return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
         }
 
-        fileData.passcode = passcode || null;
-        fileData.expireDate = expireDate || null;
+        // Conditionally update properties
+        if (passcode !== undefined) {
+            fileData.passcode = passcode || null;
+        }
+        if (expireDate !== undefined) {
+             fileData.expireDate = expireDate || null;
+        }
+        
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
         
         const historyKey = `history:upload:${userId}`;
         const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = fileHistory.map(file => {
             if (file.shortUrl === shortUrl) {
-                return { ...file, hasPasscode: !!passcode, expireDate: expireDate || null };
+                const updatedFile = { ...file };
+                if (passcode !== undefined) {
+                    updatedFile.hasPasscode = !!passcode;
+                }
+                if (expireDate !== undefined) {
+                    updatedFile.expireDate = expireDate || null;
+                }
+                return updatedFile;
             }
             return file;
         });
