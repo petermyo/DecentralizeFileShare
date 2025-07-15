@@ -521,6 +521,7 @@ async function handlePublicListGet(request, env) {
     const listData = await env.APP_KV.get(`list:${listShortCode}`, { type: 'json' });
     if (!listData) return new Response('List not found or expired', { status: 404 });
 
+    // FIX: Use the 'files' property which contains the array of file objects.
     const filesInList = listData.files || [];
 
     return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
