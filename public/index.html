@@ -323,7 +323,6 @@
                 setLastResults([]);
                 
                 try {
-                    // Stage 1: Initiate all uploads in one batch
                     const filesToInitiate = selectedFiles.map(f => ({ fileName: f.name, fileType: f.type }));
                     const initResponse = await fetch('/api/upload/initiate', {
                         method: 'POST',
@@ -333,7 +332,6 @@
                     if (!initResponse.ok) throw new Error('Could not start upload session.');
                     const { sessions } = await initResponse.json();
 
-                    // Stage 2: Upload all files in parallel
                     const uploadPromises = sessions.map(session => {
                         const file = selectedFiles.find(f => f.name === session.originalName);
                         return new Promise((resolve, reject) => {
@@ -348,8 +346,13 @@
                             };
                             xhr.onload = () => {
                                 if (xhr.status >= 200 && xhr.status < 300) {
-                                    const uploadedFile = JSON.parse(xhr.response);
-                                    resolve({ uploadedFile, session, file });
+                                    // A successful resumable upload might return an empty body.
+                                    // The important part is the 200 OK status.
+                                    // We need to query the session to get the file ID.
+                                    fetch(session.uploadUrl, { method: 'PUT', headers: { 'Content-Range': `bytes */${file.size}` }})
+                                        .then(res => res.json())
+                                        .then(finalState => resolve({ uploadedFile: finalState, session, file }))
+                                        .catch(reject);
                                 } else {
                                     reject(new Error(`Upload failed for ${file.name}`));
                                 }
@@ -361,7 +364,6 @@
 
                     const settledUploads = await Promise.allSettled(uploadPromises);
                     
-                    // Stage 3: Finalize all successful uploads
                     const newFileIds = [];
                     const newResults = [];
                     for (const result of settledUploads) {
@@ -390,7 +392,7 @@
                     }
 
                     setLastResults(newResults);
-                    if (newFileIds.length > 0) {
+                    if (newFileIds.length > 0 && newResults.length === selectedFiles.length) {
                         onBatchComplete(newFileIds);
                     }
 
@@ -443,7 +445,10 @@
                             <div className="space-y-2">
                                 {selectedFiles.map(file => (
                                     <div key={file.name}>
-                                        <p className="text-sm text-slate-600 truncate">{file.name}</p>
+                                        <div className="flex justify-between text-sm text-slate-600">
+                                            <p className="truncate w-4/5">{file.name}</p>
+                                            <p>{uploadProgress[file.name] || 0}%</p>
+                                        </div>
                                         <div className="w-full bg-slate-200 rounded-full h-2.5">
                                             <div className="bg-sky-500 h-2.5 rounded-full" style={{width: `${uploadProgress[file.name] || 0}%`}}></div>
                                         </div>
