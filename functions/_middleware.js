@@ -204,6 +204,7 @@ async function handleCallback(request, env) {
     }
 }
 
+// UPDATE: New two-stage upload logic
 async function handleUploadInitiate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
