@@ -228,7 +228,6 @@ async function handleUploadInitiate(request, env) {
 
             const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
 
-            // FIX: Add the 'Origin' header to the initiation request.
             const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
                 method: 'POST',
                 headers: {
@@ -517,14 +516,8 @@ async function handlePublicListGet(request, env) {
     const listData = await env.APP_KV.get(`list:${listShortCode}`, { type: 'json' });
     if (!listData) return new Response('List not found or expired', { status: 404 });
 
-    // In a real app, you would add passcode/expiration checks here too
-
-    const fileHistoryKey = `history:upload:${listData.ownerId}`;
-    const ownerFileHistory = await env.APP_KV.get(fileHistoryKey, { type: 'json' }) || [];
-    
-    const filesInList = listData.fileIds.map(id => 
-        ownerFileHistory.find(file => file.fileId === id)
-    ).filter(Boolean); // Filter out any files that might have been deleted
+    // FIX: Use the 'files' property which contains the array of file objects.
+    const filesInList = listData.files || [];
 
     return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
 }
