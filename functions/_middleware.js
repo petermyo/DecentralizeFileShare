@@ -4,8 +4,7 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version implements a robust, two-stage upload process to handle
- * large files in parallel without timing out the serverless function.
+ * This version adds the ability to create and share lists of files.
  *
  */
 
@@ -13,7 +12,7 @@
 import * as jose from 'jose';
 
 // --- Constants ---
-const FOLDER_NAME = "Decentralized File Share";
+const FOLDER_NAME = "D File Advance File Sharing";
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
@@ -32,19 +31,19 @@ export const onRequest = async (context) => {
         return handleApiRequest(request, env);
     }
 
-    // Route short URL redirects
+    // Route short URL redirects for individual files
     if (path.startsWith('/s/')) {
-        if (request.method === 'GET') {
-            return handleShortUrlGet(request, env);
-        }
-        if (request.method === 'POST') {
-            return handleShortUrlPost(request, env);
-        }
+        return handleShortUrlGet(request, env);
     }
     
-    // Route public list views
+    // UPDATE: Route short URL redirects for lists
     if (path.startsWith('/l/')) {
-        return handlePublicListGet(request, env);
+         if (request.method === 'GET') {
+            return handleListGet(request, env);
+        }
+        if (request.method === 'POST') {
+            return handleListPost(request, env);
+        }
     }
 
 
@@ -65,7 +64,6 @@ async function handleApiRequest(request, env) {
             return handleLogin(request, env);
         case '/api/auth/google/callback':
             return handleCallback(request, env);
-        // UPDATE: Using two-stage upload endpoints for large file support
         case '/api/upload/initiate':
             return handleUploadInitiate(request, env);
         case '/api/upload/finalize':
@@ -80,10 +78,13 @@ async function handleApiRequest(request, env) {
             return handleDelete(request, env);
         case '/api/file/update':
             return handleFileUpdate(request, env);
+        // UPDATE: New endpoints for lists
         case '/api/lists/create':
             return handleListCreate(request, env);
         case '/api/lists':
-            return getLists(request, env);
+            return getListsHistory(request, env);
+        case '/api/list/data':
+             return getListData(request, env);
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
@@ -168,7 +169,6 @@ async function handleCallback(request, env) {
         const profile = await profileResponse.json();
         const userId = profile.id;
         const userName = profile.name;
-        const picture = profile.picture;
 
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             access_token: tokens.access_token,
@@ -187,7 +187,7 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
-        const token = await new jose.SignJWT({ userId, userName, picture })
+        const token = await new jose.SignJWT({ userId, userName })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
             .setExpirationTime('24h')
@@ -204,14 +204,13 @@ async function handleCallback(request, env) {
     }
 }
 
-// UPDATE: New two-stage upload logic
 async function handleUploadInitiate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
-        const { files } = await request.json(); // Expect an array of files
+        const { fileName, fileType } = await request.json();
 
-        if (!files || !Array.isArray(files) || files.length === 0) {
-            return new Response(JSON.stringify({ error: 'Missing files array.' }), { status: 400 });
+        if (!fileName || !fileType) {
+            return new Response(JSON.stringify({ error: 'Missing fileName or fileType' }), { status: 400 });
         }
 
         const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
@@ -219,35 +218,36 @@ async function handleUploadInitiate(request, env) {
 
         const accessToken = await getValidAccessToken(tokenData, userId, env);
         const folderId = await findOrCreateFolder(accessToken, env);
+
+        const now = new Date();
+        const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
+        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+        const newFileName = `${fileName}_${date}_${time}`;
+
+        const metadata = {
+            name: newFileName,
+            parents: [folderId],
+            mimeType: fileType,
+        };
         
-        const uploadSessions = await Promise.all(files.map(async (file) => {
-            const now = new Date();
-            const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
-            const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const newFileName = `${file.fileName}_${date}_${time}`;
+        const requestOrigin = new URL(request.url).origin;
 
-            const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
+        const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json; charset=UTF-8',
+                'Origin': requestOrigin,
+            },
+            body: JSON.stringify(metadata)
+        });
 
-            const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' },
-                body: JSON.stringify(metadata)
-            });
-
-            if (!metadataRes.ok) {
-                console.error(`Failed to initiate for ${file.fileName}`);
-                return null;
-            }
-            
-            return {
-                originalName: file.fileName,
-                newFileName: newFileName,
-                uploadUrl: metadataRes.headers.get('Location')
-            };
-        }));
-
-        const validSessions = uploadSessions.filter(Boolean);
-        return new Response(JSON.stringify({ sessions: validSessions }), { status: 200 });
+        if (!metadataRes.ok) {
+            throw new Error('Failed to initiate Google Drive upload session.');
+        }
+        
+        const uploadUrl = metadataRes.headers.get('Location');
+        return new Response(JSON.stringify({ uploadUrl, newFileName }), { status: 200 });
 
     } catch (err) {
         if (err instanceof Response) return err;
@@ -277,10 +277,12 @@ async function handleUploadFinalize(request, env) {
         }), { expirationTtl: 60 * 60 * 24 * 30 });
 
         const fileMeta = {
-            fileId, fileName, originalName, fileSize,
+            fileId, fileName, originalName,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
-            expireDate: expireDate || null
+            passcode: passcode || null,
+            expireDate: expireDate || null,
+            size: fileSize
         };
         const historyKey = `history:upload:${userId}`;
         const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
@@ -309,7 +311,7 @@ async function handleShortUrlGet(request, env) {
     }
 
     if (fileData.passcode) {
-        return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPasscodePage(shortCode, fileData.name, false, false), { headers: { 'Content-Type': 'text/html' } });
     }
 
     return streamFile(fileData, env);
@@ -329,7 +331,7 @@ async function handleShortUrlPost(request, env) {
     if (fileData.passcode && submittedPasscode === fileData.passcode) {
         return streamFile(fileData, env);
     } else {
-        return new Response(getPasscodePage(shortCode, fileData.name, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPasscodePage(shortCode, fileData.name, true, false), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
 }
 
@@ -344,7 +346,6 @@ async function handleMe(request, env) {
             loggedIn: true,
             userId: payload.userId,
             userName: payload.userName,
-            picture: payload.picture
         }), { headers: { 'Content-Type': 'application/json' } });
 
     } catch (err) {
@@ -414,18 +415,31 @@ async function handleDelete(request, env) {
 }
 
 async function handleFileUpdate(request, env) {
-     try {
+    try {
         const userId = await getAuthenticatedUserId(request, env);
         const { shortUrl, passcode, expireDate } = await request.json();
-        const shortCode = shortUrl.split('/s/')[1];
 
+        if (!shortUrl) {
+            return new Response(JSON.stringify({ error: "Missing shortUrl" }), { status: 400 });
+        }
+
+        const shortCode = shortUrl.split('/s/')[1];
         const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
-        if (!fileData || fileData.ownerId !== userId) {
-            return new Response(JSON.stringify({ error: "File not found or permission denied." }), { status: 404 });
+
+        if (!fileData) {
+            return new Response(JSON.stringify({ error: "File not found" }), { status: 404 });
         }
         
-        fileData.passcode = passcode || null;
-        fileData.expireDate = expireDate || null;
+        if (fileData.ownerId !== userId) {
+            return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403 });
+        }
+
+        if (passcode !== undefined) {
+            fileData.passcode = passcode || null;
+        }
+        if (expireDate !== undefined) {
+             fileData.expireDate = expireDate || null;
+        }
         
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
         
@@ -433,90 +447,128 @@ async function handleFileUpdate(request, env) {
         const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = fileHistory.map(file => {
             if (file.shortUrl === shortUrl) {
-                return { ...file, hasPasscode: !!passcode, expireDate: expireDate };
+                const updatedFile = { ...file };
+                if (passcode !== undefined) {
+                    updatedFile.hasPasscode = !!passcode;
+                    updatedFile.passcode = passcode || null;
+                }
+                if (expireDate !== undefined) {
+                    updatedFile.expireDate = expireDate || null;
+                }
+                return updatedFile;
             }
             return file;
         });
         await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
 
-        return new Response(JSON.stringify({ success: true }), { status: 200 });
-    } catch(err) {
+        return new Response(JSON.stringify({ success: true, message: 'File updated successfully.' }), { status: 200 });
+
+    } catch (err) {
         if (err instanceof Response) return err;
-        return new Response(JSON.stringify({ error: 'Failed to update file.' }), { status: 500 });
+        console.error('File update error:', err.message);
+        return new Response(JSON.stringify({ error: 'Failed to update file.', details: err.message }), { status: 500 });
     }
 }
 
+// UPDATE: New handlers for lists
 async function handleListCreate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
         const { fileIds, passcode, expireDate } = await request.json();
 
-        if (!fileIds || fileIds.length === 0) {
+        if (!fileIds || !Array.isArray(fileIds) || fileIds.length === 0) {
             return new Response(JSON.stringify({ error: "No files selected for the list." }), { status: 400 });
         }
 
-        const listShortCode = Math.random().toString(36).substring(2, 8);
-        const listShortUrl = `${new URL(request.url).origin}/l/${listShortCode}`;
+        const historyKey = `history:upload:${userId}`;
+        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         
+        const listFiles = fileHistory.filter(file => fileIds.includes(file.fileId));
+        if (listFiles.length !== fileIds.length) {
+            return new Response(JSON.stringify({ error: "Some selected files were not found or you do not have permission." }), { status: 403 });
+        }
+
+        const shortCode = Math.random().toString(36).substring(2, 8);
+        const listShortUrl = `${new URL(request.url).origin}/l/${shortCode}`;
+
         const listData = {
-            fileIds,
+            files: listFiles,
+            ownerId: userId,
             passcode: passcode || null,
             expireDate: expireDate || null,
-            ownerId: userId,
-            createdAt: new Date().toISOString()
         };
+        await env.APP_KV.put(`list:${shortCode}`, JSON.stringify(listData), { expirationTtl: 60 * 60 * 24 * 90 }); // 90-day expiry
 
-        await env.APP_KV.put(`list:${listShortCode}`, JSON.stringify(listData));
-
-        const listsHistoryKey = `history:lists:${userId}`;
-        const existingLists = await env.APP_KV.get(listsHistoryKey, { type: 'json' }) || [];
-        existingLists.push({
+        const listHistoryKey = `history:list:${userId}`;
+        const existingListHistory = await env.APP_KV.get(listHistoryKey, { type: 'json' }) || [];
+        existingListHistory.push({
             shortUrl: listShortUrl,
-            createdAt: listData.createdAt,
-            fileCount: fileIds.length,
-            passcode: listData.passcode
+            fileCount: listFiles.length,
+            createdAt: new Date().toISOString(),
+            passcode: !!passcode,
+            expireDate: expireDate || null
         });
-        await env.APP_KV.put(listsHistoryKey, JSON.stringify(existingLists));
-        
-        return new Response(JSON.stringify({ success: true, shortUrl: listShortUrl }), { status: 200 });
-    } catch(err) {
-         if (err instanceof Response) return err;
-        return new Response(JSON.stringify({ error: 'Failed to create list.' }), { status: 500 });
-    }
-}
+        await env.APP_KV.put(listHistoryKey, JSON.stringify(existingListHistory));
 
-async function getLists(request, env) {
-     try {
-        const userId = await getAuthenticatedUserId(request, env);
-        const listsHistoryKey = `history:lists:${userId}`;
-        const listsHistory = await env.APP_KV.get(listsHistoryKey, { type: 'json' }) || [];
-        return new Response(JSON.stringify(listsHistory.reverse()), { headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ shortUrl: listShortUrl }), { status: 200 });
     } catch (err) {
         if (err instanceof Response) return err;
-        return new Response(JSON.stringify({ error: "Could not fetch lists." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        console.error('List creation error:', err.message);
+        return new Response(JSON.stringify({ error: 'Failed to create list.', details: err.message }), { status: 500 });
     }
 }
 
-async function handlePublicListGet(request, env) {
-    const url = new URL(request.url);
-    const listShortCode = url.pathname.split('/l/')[1];
-    if (!listShortCode) return new Response('Invalid List URL', { status: 400 });
-
-    const listData = await env.APP_KV.get(`list:${listShortCode}`, { type: 'json' });
-    if (!listData) return new Response('List not found or expired', { status: 404 });
-
-    // In a real app, you would add passcode/expiration checks here too
-
-    const fileHistoryKey = `history:upload:${listData.ownerId}`;
-    const ownerFileHistory = await env.APP_KV.get(fileHistoryKey, { type: 'json' }) || [];
-    
-    const filesInList = listData.fileIds.map(id => 
-        ownerFileHistory.find(file => file.fileId === id)
-    ).filter(Boolean); // Filter out any files that might have been deleted
-
-    return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
+async function getListsHistory(request, env) {
+     try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const historyKey = `history:list:${userId}`;
+        const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        return new Response(JSON.stringify(listHistory.reverse()), { headers: { 'Content-Type': 'application/json' } });
+    } catch (err) {
+        if (err instanceof Response) return err;
+        return new Response(JSON.stringify({ error: "Could not fetch list history." }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
 }
 
+async function getListData(request, env) {
+    const url = new URL(request.url);
+    const shortCode = url.searchParams.get('id');
+    if (!shortCode) return new Response('Missing list ID.', { status: 400 });
+
+    const listData = await env.APP_KV.get(`list:${shortCode}`, { type: 'json' });
+    if (!listData) return new Response('List not found or expired.', { status: 404 });
+    
+    if (listData.expireDate && new Date(listData.expireDate) < new Date()) {
+        return new Response('This list has expired.', { status: 403 });
+    }
+
+    if (listData.passcode) {
+        return new Response(JSON.stringify({ isProtected: true, fileName: `${listData.files.length} files` }), { status: 200 });
+    }
+
+    return new Response(JSON.stringify({ isProtected: false, files: listData.files }), { status: 200 });
+}
+
+async function handleListGet(request, env) {
+    // This just serves the main HTML page. React will handle fetching the data.
+    return env.ASSETS.fetch(request);
+}
+
+async function handleListPost(request, env) {
+    const url = new URL(request.url);
+    const shortCode = url.pathname.split('/l/')[1];
+    const listData = await env.APP_KV.get(`list:${shortCode}`, { type: 'json' });
+    if (!listData) return new Response('List not found or expired.', { status: 404 });
+
+    const formData = await request.formData();
+    const submittedPasscode = formData.get('passcode');
+
+    if (listData.passcode && submittedPasscode === listData.passcode) {
+        return new Response(JSON.stringify({ isProtected: false, files: listData.files }), { status: 200 });
+    } else {
+        return new Response(JSON.stringify({ error: 'Incorrect passcode' }), { status: 401 });
+    }
+}
 
 // --- Helper Functions ---
 async function getValidAccessToken(tokenData, userId, env) {
@@ -590,7 +642,8 @@ async function streamFile(fileData, env) {
     }
 }
 
-function getPasscodePage(shortCode, fileName, hasError = false) {
+function getPasscodePage(shortCode, fileName, hasError = false, isList = false) {
+    const actionUrl = isList ? `/l/${shortCode}` : `/s/${shortCode}`;
     const errorMessage = hasError ? `<p class="text-red-500 text-sm mb-4">Incorrect passcode. Please try again.</p>` : '';
     return `
         <!DOCTYPE html>
@@ -604,64 +657,17 @@ function getPasscodePage(shortCode, fileName, hasError = false) {
         <body class="bg-gray-100 flex items-center justify-center min-h-screen">
             <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
                 <h2 class="text-2xl font-bold text-center text-gray-800">Passcode Required</h2>
-                <p class="text-center text-gray-600">This file is protected. Please enter the passcode to download:</p>
+                <p class="text-center text-gray-600">This content is protected. Please enter the passcode to continue:</p>
                 <p class="text-center text-gray-800 font-semibold break-all">${fileName}</p>
-                <form method="POST" action="/s/${shortCode}">
+                <form method="POST" action="${actionUrl}">
                     ${errorMessage}
                     <input type="password" name="passcode" placeholder="Enter passcode" required
                            class="w-full px-4 py-2 mb-4 text-gray-700 bg-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <button type="submit"
                             class="w-full px-4 py-2 font-bold text-white bg-blue-500 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        Download
+                        Access
                     </button>
                 </form>
-            </div>
-        </body>
-        </html>
-    `;
-}
-
-function getPublicListPage(files) {
-     const fileRows = files.map(file => `
-        <tr class="border-b">
-            <td class="p-4 text-slate-700">${file.fileName}</td>
-            <td class="p-4 text-center">
-                <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline">Download</a>
-            </td>
-        </tr>
-    `).join('');
-
-    return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Shared File List</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-slate-100">
-            <div class="container mx-auto max-w-4xl mt-10 p-4">
-                <div class="bg-white rounded-lg shadow-lg p-8">
-                    <h1 class="text-3xl font-bold text-slate-800 mb-2">Download Links</h1>
-                    <p class="text-slate-600 mb-6">Here is a list of shared files available for download.</p>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left">
-                            <thead class="bg-slate-50">
-                                <tr>
-                                    <th class="p-4 font-semibold text-slate-600">File Name</th>
-                                    <th class="p-4 font-semibold text-slate-600 text-center">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${fileRows}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                 <footer class="text-center p-6 text-slate-500 text-sm">
-                     Powered by ဒီဖိုင်
-                 </footer>
             </div>
         </body>
         </html>
