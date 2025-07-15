@@ -99,6 +99,17 @@
                     file.fileId === updatedFile.fileId ? { ...file, ...updatedFile } : file
                 ));
             };
+            
+            // UPDATE: Add handlers for list CRUD operations
+            const handleListDelete = (shortUrl) => {
+                setLists(prevLists => prevLists.filter(list => list.shortUrl !== shortUrl));
+            };
+
+            const handleListUpdate = (updatedList) => {
+                setLists(prevLists => prevLists.map(list =>
+                    list.shortUrl === updatedList.shortUrl ? { ...list, ...updatedList } : list
+                ));
+            };
 
             // --- Render Logic ---
             if (isLoading) {
@@ -136,6 +147,8 @@
                                 onFileDelete={handleFileDelete} 
                                 onFileUpdate={handleFileUpdate}
                                 onListCreated={fetchData}
+                                onListDelete={handleListDelete}
+                                onListUpdate={handleListUpdate}
                             />
                         ) : (
                             <LoginScreen />
@@ -178,12 +191,15 @@
             </div>
         );
         
-        const MainLayout = ({ files, lists, view, setView, addFileToList, onFileDelete, onFileUpdate, onListCreated }) => {
+        const MainLayout = ({ files, lists, view, setView, addFileToList, onFileDelete, onFileUpdate, onListCreated, onListDelete, onListUpdate }) => {
             const [recentUploadUrl, setRecentUploadUrl] = useState(null);
             const [editingFile, setEditingFile] = useState(null);
             const [deletingFile, setDeletingFile] = useState(null);
             const [selectedFileIds, setSelectedFileIds] = useState([]);
             const [isCreatingList, setIsCreatingList] = useState(false);
+            // UPDATE: Add state for editing/deleting lists
+            const [editingList, setEditingList] = useState(null);
+            const [deletingList, setDeletingList] = useState(null);
 
             useEffect(() => {
                 if (recentUploadUrl) {
@@ -202,7 +218,7 @@
                                 addFileToList={addFileToList} 
                                 setRecentUploadUrl={setRecentUploadUrl} 
                                 onBatchComplete={(newFileIds) => {
-                                    if (window.confirm(`Successfully uploaded ${newFileIds.length} files. Would you like to create a list from them?`)) {
+                                    if (newFileIds.length > 1 && window.confirm(`Successfully uploaded ${newFileIds.length} files. Would you like to create a list from them?`)) {
                                         setSelectedFileIds(newFileIds);
                                         setIsCreatingList(true);
                                     }
@@ -233,7 +249,11 @@
                                     onOpenCreateList={() => setIsCreatingList(true)}
                                 />
                             ) : (
-                                <ListsTable lists={lists} />
+                                <ListsTable 
+                                    lists={lists} 
+                                    onEditList={setEditingList}
+                                    onDeleteList={setDeletingList}
+                                />
                             )}
                         </div>
                     </div>
@@ -266,6 +286,27 @@
                             onConfirm={() => {
                                 onFileDelete(deletingFile.fileId);
                                 setDeletingFile(null);
+                            }}
+                        />
+                    )}
+                    {/* UPDATE: Add modals for list actions */}
+                    {editingList && (
+                        <EditListModal
+                            list={editingList}
+                            onClose={() => setEditingList(null)}
+                            onUpdate={(updatedList) => {
+                                onListUpdate(updatedList);
+                                setEditingList(null);
+                            }}
+                        />
+                    )}
+                    {deletingList && (
+                        <ConfirmDeleteListModal
+                            list={deletingList}
+                            onClose={() => setDeletingList(null)}
+                            onConfirm={() => {
+                                onListDelete(deletingList.shortUrl);
+                                setDeletingList(null);
                             }}
                         />
                     )}
@@ -345,11 +386,7 @@
                                 }
                             };
                             xhr.onload = () => {
-                                // FIX: The final response from a successful resumable upload is empty.
-                                // The file metadata is retrieved from the 'Location' header of the *initial* response.
-                                // The final PUT request confirms the upload is complete.
                                 if (xhr.status === 200 || xhr.status === 201) {
-                                    // The upload is done. We need to query the session to get the file ID.
                                     fetch(session.uploadUrl, { 
                                         method: 'PUT', 
                                         headers: { 'Content-Range': `bytes */${file.size}` }
@@ -396,7 +433,7 @@
                     }
 
                     setLastResults(newResults);
-                    if (newFileIds.length > 0 && newResults.length === selectedFiles.length) {
+                    if (newFileIds.length > 0) {
                         onBatchComplete(newFileIds);
                     }
 
