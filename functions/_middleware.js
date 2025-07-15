@@ -4,8 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version includes the critical 'Origin' header in the upload initiation
- * request to Google, which resolves the browser CORS issue for direct uploads.
+ * This version adds full CRUD functionality for file lists and fixes the
+ * public list view rendering.
  *
  */
 
@@ -32,7 +32,7 @@ export const onRequest = async (context) => {
         return handleApiRequest(request, env);
     }
 
-    // Route short URL redirects
+    // Route short URL redirects for individual files
     if (path.startsWith('/s/')) {
         if (request.method === 'GET') {
             return handleShortUrlGet(request, env);
@@ -83,6 +83,11 @@ async function handleApiRequest(request, env) {
             return handleListCreate(request, env);
         case '/api/lists':
             return getLists(request, env);
+        // UPDATE: New endpoints for list management
+        case '/api/lists/update':
+            return handleListUpdate(request, env);
+        case '/api/lists/delete':
+            return handleListDelete(request, env);
     }
 
     return new Response('API route not found or method not allowed', { status: 404 });
@@ -516,10 +521,64 @@ async function handlePublicListGet(request, env) {
     const listData = await env.APP_KV.get(`list:${listShortCode}`, { type: 'json' });
     if (!listData) return new Response('List not found or expired', { status: 404 });
 
-    // FIX: Use the 'files' property which contains the array of file objects.
     const filesInList = listData.files || [];
 
     return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
+}
+
+// UPDATE: New handler for deleting a list
+async function handleListDelete(request, env) {
+    try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const { shortUrl } = await request.json();
+        if (!shortUrl) return new Response(JSON.stringify({ error: "Missing shortUrl" }), { status: 400 });
+
+        const shortCode = shortUrl.split('/l/')[1];
+        await env.APP_KV.delete(`list:${shortCode}`);
+
+        const historyKey = `history:list:${userId}`;
+        const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const updatedHistory = listHistory.filter(list => list.shortUrl !== shortUrl);
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        if (err instanceof Response) return err;
+        return new Response(JSON.stringify({ error: 'Failed to delete list.' }), { status: 500 });
+    }
+}
+
+// UPDATE: New handler for updating a list
+async function handleListUpdate(request, env) {
+    try {
+        const userId = await getAuthenticatedUserId(request, env);
+        const { shortUrl, passcode, expireDate } = await request.json();
+        const shortCode = shortUrl.split('/l/')[1];
+
+        const listData = await env.APP_KV.get(`list:${shortCode}`, { type: 'json' });
+        if (!listData || listData.ownerId !== userId) {
+            return new Response(JSON.stringify({ error: "List not found or permission denied." }), { status: 404 });
+        }
+
+        listData.passcode = passcode || null;
+        listData.expireDate = expireDate || null;
+        await env.APP_KV.put(`list:${shortCode}`, JSON.stringify(listData));
+
+        const historyKey = `history:list:${userId}`;
+        const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const updatedHistory = listHistory.map(list => {
+            if (list.shortUrl === shortUrl) {
+                return { ...list, passcode: !!passcode, expireDate: expireDate || null };
+            }
+            return list;
+        });
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+        
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        if (err instanceof Response) return err;
+        return new Response(JSON.stringify({ error: 'Failed to update list.' }), { status: 500 });
+    }
 }
 
 
@@ -628,11 +687,23 @@ function getPasscodePage(shortCode, fileName, hasError = false, isList = false) 
 }
 
 function getPublicListPage(files) {
+     const formatBytes = (bytes, decimals = 2) => {
+        if (!bytes || bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+     
      const fileRows = files.map(file => `
-        <tr class="border-b">
-            <td class="p-4 text-slate-700">${file.fileName}</td>
+        <tr class="border-b border-slate-200">
+            <td class="p-4 text-slate-800">
+                <div class="font-medium">${file.fileName}</div>
+                <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
+            </td>
             <td class="p-4 text-center">
-                <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline">Download</a>
+                <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Download</a>
             </td>
         </tr>
     `).join('');
@@ -655,7 +726,7 @@ function getPublicListPage(files) {
                         <table class="w-full text-left">
                             <thead class="bg-slate-50">
                                 <tr>
-                                    <th class="p-4 font-semibold text-slate-600">File Name</th>
+                                    <th class="p-4 font-semibold text-slate-600">File Details</th>
                                     <th class="p-4 font-semibold text-slate-600 text-center">Action</th>
                                 </tr>
                             </thead>
