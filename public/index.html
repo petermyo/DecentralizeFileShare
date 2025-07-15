@@ -3,17 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Decentralized File Share</title>
+    <title>ဒီဖိုင် - D File</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#ffffff">
+    <link rel="apple-touch-icon" href="https://placehold.co/192x192/0284c7/FFFFFF?text=D">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .animate-fade-in { animation: fadeIn 0.5s ease-out forwards; }
         .highlight-row {
-            background-color: #ebf8ff; /* A light blue highlight */
+            background-color: #f0f9ff; /* A light sky highlight */
             transition: background-color 1s ease-out;
         }
     </style>
@@ -269,26 +274,22 @@
         };
         
         const UploadForm = ({ addFileToList, setRecentUploadUrl, onBatchComplete }) => {
-            // UPDATE: Handle multiple files
             const [selectedFiles, setSelectedFiles] = useState([]);
             const [passcode, setPasscode] = useState('');
             const [expireDate, setExpireDate] = useState('');
             const [isUploading, setIsUploading] = useState(false);
             const [error, setError] = useState('');
-            const [progress, setProgress] = useState(0);
-            const [uploadStatusText, setUploadStatusText] = useState('');
+            const [uploadProgress, setUploadProgress] = useState({});
             const [dragActive, setDragActive] = useState(false);
-            // UPDATE: Store multiple results
             const [lastResults, setLastResults] = useState([]);
             const inputRef = useRef(null);
             
             const handleFileChange = (files) => {
                 if (files && files.length > 0) {
-                    // Convert FileList to Array
                     setSelectedFiles(Array.from(files));
                     setLastResults([]);
                     setError('');
-                    setProgress(0);
+                    setUploadProgress({});
                 }
             }
             
@@ -311,7 +312,6 @@
                 }
             };
 
-            // UPDATE: Handle multiple file uploads sequentially
             const handleSubmit = async (e) => {
                 e.preventDefault();
                 if (selectedFiles.length === 0) {
@@ -322,73 +322,85 @@
                 setError('');
                 setLastResults([]);
                 
-                const newFileIds = [];
-                const newResults = [];
+                try {
+                    // Stage 1: Initiate all uploads in one batch
+                    const filesToInitiate = selectedFiles.map(f => ({ fileName: f.name, fileType: f.type }));
+                    const initResponse = await fetch('/api/upload/initiate', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ files: filesToInitiate })
+                    });
+                    if (!initResponse.ok) throw new Error('Could not start upload session.');
+                    const { sessions } = await initResponse.json();
 
-                for (let i = 0; i < selectedFiles.length; i++) {
-                    const file = selectedFiles[i];
-                    setUploadStatusText(`Uploading ${i + 1} of ${selectedFiles.length}: ${file.name}`);
-                    setProgress(0);
-                    
-                    try {
-                        // Stage 1: Initiate
-                        const initResponse = await fetch('/api/upload/initiate', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ fileName: file.name, fileType: file.type })
-                        });
-                        if (!initResponse.ok) throw new Error(`Could not start upload session for ${file.name}.`);
-                        const { uploadUrl, newFileName } = await initResponse.json();
-
-                        // Stage 2: Upload
-                        const uploadedFile = await new Promise((resolve, reject) => {
-                            const xhr = new XMLHttpRequest();
-                            xhr.open('PUT', uploadUrl, true);
+                    // Stage 2: Upload all files in parallel
+                    const uploadPromises = sessions.map(session => {
+                        const file = selectedFiles.find(f => f.name === session.originalName);
+                        return new Promise((resolve, reject) => {
+                             const xhr = new XMLHttpRequest();
+                            xhr.open('PUT', session.uploadUrl, true);
                             xhr.setRequestHeader('Content-Type', file.type);
                             xhr.upload.onprogress = (event) => {
                                 if (event.lengthComputable) {
-                                    setProgress(Math.round((event.loaded / event.total) * 100));
+                                    const percent = Math.round((event.loaded / event.total) * 100);
+                                    setUploadProgress(prev => ({ ...prev, [file.name]: percent }));
                                 }
                             };
                             xhr.onload = () => {
-                                if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.response));
-                                else reject(new Error(`Upload failed for ${file.name}`));
+                                if (xhr.status >= 200 && xhr.status < 300) {
+                                    const uploadedFile = JSON.parse(xhr.response);
+                                    resolve({ uploadedFile, session, file });
+                                } else {
+                                    reject(new Error(`Upload failed for ${file.name}`));
+                                }
                             };
-                            xhr.onerror = () => reject(new Error('Network error during upload.'));
+                            xhr.onerror = () => reject(new Error(`Network error on ${file.name}`));
                             xhr.send(file);
                         });
+                    });
 
-                        // Stage 3: Finalize
-                        const finalizeResponse = await fetch('/api/upload/finalize', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                fileId: uploadedFile.id, fileName: newFileName, originalName: file.name,
-                                passcode, expireDate, fileSize: file.size
-                            })
-                        });
-                        const finalResult = await finalizeResponse.json();
-                        if (!finalizeResponse.ok) throw new Error(finalResult.error || `Failed to finalize ${file.name}.`);
-
-                        addFileToList(finalResult.fileMeta);
-                        setRecentUploadUrl(finalResult.shortUrl);
-                        newResults.push(finalResult);
-                        newFileIds.push(finalResult.fileMeta.fileId);
-
-                    } catch (err) {
-                        setError(prev => prev ? `${prev}\n${err.message}` : err.message);
+                    const settledUploads = await Promise.allSettled(uploadPromises);
+                    
+                    // Stage 3: Finalize all successful uploads
+                    const newFileIds = [];
+                    const newResults = [];
+                    for (const result of settledUploads) {
+                        if (result.status === 'fulfilled') {
+                            const { uploadedFile, session, file } = result.value;
+                            const finalizeResponse = await fetch('/api/upload/finalize', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    fileId: uploadedFile.id, fileName: session.newFileName, originalName: file.name,
+                                    passcode, expireDate, fileSize: file.size
+                                })
+                            });
+                            const finalResult = await finalizeResponse.json();
+                            if (finalizeResponse.ok) {
+                                addFileToList(finalResult.fileMeta);
+                                setRecentUploadUrl(finalResult.shortUrl);
+                                newResults.push(finalResult);
+                                newFileIds.push(finalResult.fileMeta.fileId);
+                            } else {
+                                setError(prev => `${prev}\nFailed to finalize: ${file.name}`);
+                            }
+                        } else {
+                             setError(prev => `${prev}\n${result.reason.message}`);
+                        }
                     }
-                }
-                
-                setLastResults(newResults);
-                setIsUploading(false);
-                setUploadStatusText('');
-                setSelectedFiles([]);
-                setPasscode('');
-                setExpireDate('');
 
-                if (newFileIds.length > 0) {
-                    onBatchComplete(newFileIds);
+                    setLastResults(newResults);
+                    if (newFileIds.length > 0) {
+                        onBatchComplete(newFileIds);
+                    }
+
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setIsUploading(false);
+                    setSelectedFiles([]);
+                    setPasscode('');
+                    setExpireDate('');
                 }
             };
 
@@ -426,22 +438,31 @@
                         </div>
                         
                         {error && <p className="text-sm text-red-600 p-2 bg-red-100 rounded-md whitespace-pre-wrap">{error}</p>}
+                        
+                        {isUploading && (
+                            <div className="space-y-2">
+                                {selectedFiles.map(file => (
+                                    <div key={file.name}>
+                                        <p className="text-sm text-slate-600 truncate">{file.name}</p>
+                                        <div className="w-full bg-slate-200 rounded-full h-2.5">
+                                            <div className="bg-sky-500 h-2.5 rounded-full" style={{width: `${uploadProgress[file.name] || 0}%`}}></div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
 
                         <button 
                             type="submit" 
                             disabled={isUploading || selectedFiles.length === 0} 
-                            style={isUploading ? {
-                                background: `linear-gradient(to right, #0ea5e9 ${progress}%, #64748b ${progress}%)`,
-                                transition: 'background 0.1s ease'
-                            } : {}}
                             className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 disabled:bg-slate-400 disabled:text-slate-200"
                         >
-                            {isUploading ? `${uploadStatusText} (${progress}%)` : 'Upload & Get Links'}
+                            {isUploading ? 'Uploading...' : `Upload ${selectedFiles.length} File(s)`}
                         </button>
                         
                         {lastResults.length > 0 && (
                             <div className="mt-4 p-3 bg-sky-100 border border-sky-300 rounded-md animate-fade-in space-y-2">
-                                <label className="block text-sm font-medium text-sky-800">Upload(s) Complete! Here are your links:</label>
+                                <label className="block text-sm font-medium text-sky-800">Upload(s) Complete!</label>
                                 {lastResults.map((result, index) => (
                                     <div key={index} className="flex rounded-md shadow-sm">
                                         <input type="text" readOnly value={result.shortUrl} className="flex-1 block w-full rounded-none rounded-l-md sm:text-sm border-slate-300 bg-slate-50 text-slate-700 p-2"/>
