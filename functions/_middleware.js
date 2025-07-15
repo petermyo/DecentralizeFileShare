@@ -32,7 +32,7 @@ export const onRequest = async (context) => {
         return handleApiRequest(request, env);
     }
 
-    // Route short URL redirects for individual files
+    // Route short URL redirects
     if (path.startsWith('/s/')) {
         if (request.method === 'GET') {
             return handleShortUrlGet(request, env);
@@ -42,7 +42,7 @@ export const onRequest = async (context) => {
         }
     }
     
-    // UPDATE: Route public list views
+    // Route public list views
     if (path.startsWith('/l/')) {
         return handlePublicListGet(request, env);
     }
@@ -167,6 +167,8 @@ async function handleCallback(request, env) {
         const profile = await profileResponse.json();
         const userId = profile.id;
         const userName = profile.name;
+        // UPDATE: Get the profile picture URL
+        const picture = profile.picture;
 
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             access_token: tokens.access_token,
@@ -185,7 +187,8 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
-        const token = await new jose.SignJWT({ userId, userName })
+        // UPDATE: Add the picture URL to the JWT payload
+        const token = await new jose.SignJWT({ userId, userName, picture })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
             .setExpirationTime('24h')
@@ -335,10 +338,12 @@ async function handleMe(request, env) {
     }
     try {
         const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
+        // UPDATE: Return the picture URL along with other user data
         return new Response(JSON.stringify({
             loggedIn: true,
             userId: payload.userId,
             userName: payload.userName,
+            picture: payload.picture
         }), { headers: { 'Content-Type': 'application/json' } });
 
     } catch (err) {
@@ -491,7 +496,6 @@ async function getLists(request, env) {
     }
 }
 
-// UPDATE: New handler to render the public list page
 async function handlePublicListGet(request, env) {
     const url = new URL(request.url);
     const listShortCode = url.pathname.split('/l/')[1];
@@ -616,7 +620,6 @@ function getPasscodePage(shortCode, fileName, hasError = false) {
     `;
 }
 
-// UPDATE: New helper to generate the public list page
 function getPublicListPage(files) {
      const fileRows = files.map(file => `
         <tr class="border-b">
