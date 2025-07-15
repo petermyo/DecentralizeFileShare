@@ -44,7 +44,12 @@ export const onRequest = async (context) => {
     
     // Route public list views
     if (path.startsWith('/l/')) {
-        return handlePublicListGet(request, env);
+        if (request.method === 'GET') {
+            return handlePublicListGet(request, env);
+        }
+        if (request.method === 'POST') {
+            return handlePublicListPost(request, env);
+        }
     }
 
 
