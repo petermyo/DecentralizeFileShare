@@ -293,6 +293,7 @@ async function handleUploadFinalize(request, env) {
             fileId, fileName, originalName, fileSize,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
+            passcode: passcode || null, // FIX: Ensure passcode string is stored for editing
             expireDate: expireDate || null
         };
         const historyKey = `history:upload:${userId}`;
@@ -446,7 +447,7 @@ async function handleFileUpdate(request, env) {
         const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = fileHistory.map(file => {
             if (file.shortUrl === shortUrl) {
-                return { ...file, hasPasscode: !!passcode, expireDate: expireDate };
+                return { ...file, hasPasscode: !!passcode, passcode: passcode || null, expireDate: expireDate };
             }
             return file;
         });
@@ -493,7 +494,7 @@ async function handleListCreate(request, env) {
             shortUrl: listShortUrl,
             fileCount: listFiles.length,
             createdAt: new Date().toISOString(),
-            passcode: !!passcode,
+            passcode: passcode || null, // FIX: Store the actual passcode, not a boolean
             expireDate: expireDate || null
         });
         await env.APP_KV.put(listHistoryKey, JSON.stringify(existingListHistory));
@@ -525,7 +526,6 @@ async function handlePublicListGet(request, env) {
     const listData = await env.APP_KV.get(`list:${listShortCode}`, { type: 'json' });
     if (!listData) return new Response('List not found or expired', { status: 404 });
 
-    // FIX: Add expiration and passcode checks for lists
     if (listData.expireDate && new Date(listData.expireDate) < new Date()) {
         return new Response('This list has expired.', { status: 403 });
     }
@@ -538,7 +538,6 @@ async function handlePublicListGet(request, env) {
     return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
 }
 
-// UPDATE: New handler for list passcode submission
 async function handlePublicListPost(request, env) {
     const url = new URL(request.url);
     const listShortCode = url.pathname.split('/l/')[1];
@@ -599,7 +598,8 @@ async function handleListUpdate(request, env) {
         const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = listHistory.map(list => {
             if (list.shortUrl === shortUrl) {
-                return { ...list, passcode: !!passcode, expireDate: expireDate || null };
+                // FIX: Store the actual passcode, not just a boolean
+                return { ...list, passcode: passcode || null, expireDate: expireDate || null };
             }
             return list;
         });
