@@ -193,7 +193,16 @@
                 <>
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-fade-in">
                         <div className="lg:col-span-4">
-                            <UploadForm addFileToList={addFileToList} setRecentUploadUrl={setRecentUploadUrl} />
+                            <UploadForm 
+                                addFileToList={addFileToList} 
+                                setRecentUploadUrl={setRecentUploadUrl} 
+                                onBatchComplete={(newFileIds) => {
+                                    if (window.confirm(`Successfully uploaded ${newFileIds.length} files. Would you like to create a list from them?`)) {
+                                        setSelectedFileIds(newFileIds);
+                                        setIsCreatingList(true);
+                                    }
+                                }}
+                            />
                         </div>
                         <div className="lg:col-span-8">
                             <div className="mb-4 border-b border-slate-200">
@@ -259,23 +268,27 @@
             );
         };
         
-        const UploadForm = ({ addFileToList, setRecentUploadUrl }) => {
-            const [selectedFile, setSelectedFile] = useState(null);
+        const UploadForm = ({ addFileToList, setRecentUploadUrl, onBatchComplete }) => {
+            // UPDATE: Handle multiple files
+            const [selectedFiles, setSelectedFiles] = useState([]);
             const [passcode, setPasscode] = useState('');
             const [expireDate, setExpireDate] = useState('');
             const [isUploading, setIsUploading] = useState(false);
             const [error, setError] = useState('');
             const [progress, setProgress] = useState(0);
+            const [uploadStatusText, setUploadStatusText] = useState('');
             const [dragActive, setDragActive] = useState(false);
-            const [lastResult, setLastResult] = useState(null);
+            // UPDATE: Store multiple results
+            const [lastResults, setLastResults] = useState([]);
             const inputRef = useRef(null);
             
             const handleFileChange = (files) => {
-                if (files && files[0]) {
-                    setSelectedFile(files[0]);
-                    setLastResult(null);
+                if (files && files.length > 0) {
+                    // Convert FileList to Array
+                    setSelectedFiles(Array.from(files));
+                    setLastResults([]);
                     setError('');
-                    setProgress(0); // Reset progress on new file selection
+                    setProgress(0);
                 }
             }
             
@@ -293,110 +306,95 @@
                 e.preventDefault();
                 e.stopPropagation();
                 setDragActive(false);
-                if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
                     handleFileChange(e.dataTransfer.files);
                 }
             };
 
+            // UPDATE: Handle multiple file uploads sequentially
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!selectedFile) {
-                    setError('Please select a file to upload.');
+                if (selectedFiles.length === 0) {
+                    setError('Please select one or more files to upload.');
                     return;
                 }
                 setIsUploading(true);
                 setError('');
-                setLastResult(null);
-                setProgress(0);
+                setLastResults([]);
+                
+                const newFileIds = [];
+                const newResults = [];
 
-                try {
-                    // Stage 1: Initiate upload
-                    const initResponse = await fetch('/api/upload/initiate', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ fileName: selectedFile.name, fileType: selectedFile.type })
-                    });
-                    if (!initResponse.ok) throw new Error('Could not start upload session.');
-                    const { uploadUrl, newFileName } = await initResponse.json();
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    const file = selectedFiles[i];
+                    setUploadStatusText(`Uploading ${i + 1} of ${selectedFiles.length}: ${file.name}`);
+                    setProgress(0);
+                    
+                    try {
+                        // Stage 1: Initiate
+                        const initResponse = await fetch('/api/upload/initiate', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ fileName: file.name, fileType: file.type })
+                        });
+                        if (!initResponse.ok) throw new Error(`Could not start upload session for ${file.name}.`);
+                        const { uploadUrl, newFileName } = await initResponse.json();
 
-                    // Stage 2: Upload file directly to Google
-                    const uploadedFile = await new Promise((resolve, reject) => {
-                        const xhr = new XMLHttpRequest();
-                        xhr.open('PUT', uploadUrl, true);
-                        xhr.setRequestHeader('Content-Type', selectedFile.type);
-
-                        xhr.upload.onprogress = (event) => {
-                            if (event.lengthComputable) {
-                                const percentComplete = Math.round((event.loaded / event.total) * 100);
-                                console.log(`Upload progress: ${percentComplete}%`); // Diagnostic log
-                                setProgress(percentComplete);
-                            } else {
-                                console.log("Upload in progress, but size is not computable.");
-                            }
-                        };
-
-                        xhr.onload = () => {
-                            if (xhr.status >= 200 && xhr.status < 300) {
-                                setProgress(100);
-                                // A successful resumable upload might return an empty body.
-                                // The important part is the 200 OK status.
-                                // We can parse the response if it exists.
-                                try {
-                                    resolve(JSON.parse(xhr.response));
-                                } catch(e) {
-                                    // If parsing fails, it means the body was empty, but the upload was successful.
-                                    // We need to query the file metadata in this case.
-                                    // For simplicity here, we'll assume the finalization will get the ID.
-                                    // A more robust solution would be to get the ID from the `Location` header
-                                    // of the *initial* response if the final response is empty.
-                                    // However, Google's docs say the metadata *is* in the final response.
-                                    // Let's proceed assuming the happy path.
-                                    reject(new Error("Could not parse Google's response, but upload may have succeeded."));
+                        // Stage 2: Upload
+                        const uploadedFile = await new Promise((resolve, reject) => {
+                            const xhr = new XMLHttpRequest();
+                            xhr.open('PUT', uploadUrl, true);
+                            xhr.setRequestHeader('Content-Type', file.type);
+                            xhr.upload.onprogress = (event) => {
+                                if (event.lengthComputable) {
+                                    setProgress(Math.round((event.loaded / event.total) * 100));
                                 }
-                            } else {
-                                reject(new Error(`Upload failed with status: ${xhr.status}`));
-                            }
-                        };
-                        xhr.onerror = () => reject(new Error('Upload failed due to a network error.'));
-                        xhr.send(selectedFile);
-                    });
+                            };
+                            xhr.onload = () => {
+                                if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.response));
+                                else reject(new Error(`Upload failed for ${file.name}`));
+                            };
+                            xhr.onerror = () => reject(new Error('Network error during upload.'));
+                            xhr.send(file);
+                        });
 
-                    // Stage 3: Finalize upload
-                    const finalizeResponse = await fetch('/api/upload/finalize', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            fileId: uploadedFile.id,
-                            fileName: newFileName,
-                            originalName: selectedFile.name,
-                            passcode,
-                            expireDate,
-                            fileSize: selectedFile.size
-                        })
-                    });
-                    
-                    const finalResult = await finalizeResponse.json();
-                    if (!finalizeResponse.ok) throw new Error(finalResult.error || 'Failed to finalize upload.');
+                        // Stage 3: Finalize
+                        const finalizeResponse = await fetch('/api/upload/finalize', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                fileId: uploadedFile.id, fileName: newFileName, originalName: file.name,
+                                passcode, expireDate, fileSize: file.size
+                            })
+                        });
+                        const finalResult = await finalizeResponse.json();
+                        if (!finalizeResponse.ok) throw new Error(finalResult.error || `Failed to finalize ${file.name}.`);
 
-                    addFileToList(finalResult.fileMeta);
-                    setRecentUploadUrl(finalResult.shortUrl);
-                    setLastResult(finalResult);
-                    
-                    setSelectedFile(null);
-                    setPasscode('');
-                    setExpireDate('');
+                        addFileToList(finalResult.fileMeta);
+                        setRecentUploadUrl(finalResult.shortUrl);
+                        newResults.push(finalResult);
+                        newFileIds.push(finalResult.fileMeta.fileId);
 
-                } catch (err) {
-                    setError(err.message);
-                } finally {
-                    setIsUploading(false);
-                    // Let the progress bar stay at 100% until a new file is chosen.
+                    } catch (err) {
+                        setError(prev => prev ? `${prev}\n${err.message}` : err.message);
+                    }
+                }
+                
+                setLastResults(newResults);
+                setIsUploading(false);
+                setUploadStatusText('');
+                setSelectedFiles([]);
+                setPasscode('');
+                setExpireDate('');
+
+                if (newFileIds.length > 0) {
+                    onBatchComplete(newFileIds);
                 }
             };
 
             return (
                 <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
-                    <h3 className="text-xl font-bold text-slate-800 mb-4">Upload New File</h3>
+                    <h3 className="text-xl font-bold text-slate-800 mb-4">Upload New File(s)</h3>
                     <form onSubmit={handleSubmit} className="space-y-4">
                         <div 
                             onDragEnter={handleDrag} 
@@ -410,46 +408,48 @@
                                 <p className="text-sm text-slate-600">
                                     <span className="font-semibold text-sky-600">Click to upload</span> or drag and drop
                                 </p>
-                                {selectedFile ? 
-                                    <p className="text-xs text-slate-500">{selectedFile.name}</p> :
+                                {selectedFiles.length > 0 ? 
+                                    <p className="text-xs text-slate-500">{selectedFiles.length} file(s) selected</p> :
                                     <p className="text-xs text-slate-500">Any file up to 5TB</p>
                                 }
                             </div>
-                            <input ref={inputRef} type="file" className="hidden" onChange={(e) => handleFileChange(e.target.files)} />
+                            <input ref={inputRef} type="file" multiple className="hidden" onChange={(e) => handleFileChange(e.target.files)} />
                         </div>
 
                         <div>
                             <label className="block text-sm font-medium text-slate-700">Passcode (Optional)</label>
-                            <input type="password" value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="Protect your file" className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"/>
+                            <input type="password" value={passcode} onChange={e => setPasscode(e.target.value)} placeholder="Protect your file(s)" className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"/>
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-slate-700">Expiration Date (Optional)</label>
                             <input type="date" value={expireDate} onChange={e => setExpireDate(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm focus:outline-none focus:ring-sky-500 focus:border-sky-500"/>
                         </div>
                         
-                        {error && <p className="text-sm text-red-600 p-2 bg-red-100 rounded-md">{error}</p>}
+                        {error && <p className="text-sm text-red-600 p-2 bg-red-100 rounded-md whitespace-pre-wrap">{error}</p>}
 
                         <button 
                             type="submit" 
-                            disabled={isUploading || !selectedFile} 
+                            disabled={isUploading || selectedFiles.length === 0} 
                             style={isUploading ? {
                                 background: `linear-gradient(to right, #0ea5e9 ${progress}%, #64748b ${progress}%)`,
                                 transition: 'background 0.1s ease'
                             } : {}}
                             className="w-full flex justify-center py-2.5 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sky-500 disabled:bg-slate-400 disabled:text-slate-200"
                         >
-                            {isUploading ? `Uploading... ${progress}%` : 'Upload & Get Link'}
+                            {isUploading ? `${uploadStatusText} (${progress}%)` : 'Upload & Get Links'}
                         </button>
                         
-                        {lastResult && (
-                            <div className="mt-4 p-3 bg-sky-100 border border-sky-300 rounded-md animate-fade-in">
-                                <label className="block text-sm font-medium text-sky-800">Upload Complete! Here is your link:</label>
-                                <div className="mt-1 flex rounded-md shadow-sm">
-                                    <input type="text" readOnly value={lastResult.shortUrl} className="flex-1 block w-full rounded-none rounded-l-md sm:text-sm border-slate-300 bg-slate-50 text-slate-700 p-2"/>
-                                    <button type="button" onClick={() => navigator.clipboard.writeText(lastResult.shortUrl)} className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-slate-300 bg-slate-100 text-slate-600 hover:bg-slate-200">
-                                        Copy
-                                    </button>
-                                </div>
+                        {lastResults.length > 0 && (
+                            <div className="mt-4 p-3 bg-sky-100 border border-sky-300 rounded-md animate-fade-in space-y-2">
+                                <label className="block text-sm font-medium text-sky-800">Upload(s) Complete! Here are your links:</label>
+                                {lastResults.map((result, index) => (
+                                    <div key={index} className="flex rounded-md shadow-sm">
+                                        <input type="text" readOnly value={result.shortUrl} className="flex-1 block w-full rounded-none rounded-l-md sm:text-sm border-slate-300 bg-slate-50 text-slate-700 p-2"/>
+                                        <button type="button" onClick={() => navigator.clipboard.writeText(result.shortUrl)} className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-slate-300 bg-slate-100 text-slate-600 hover:bg-slate-200">
+                                            Copy
+                                        </button>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </form>
