@@ -345,23 +345,19 @@
                                 }
                             };
                             xhr.onload = () => {
-                                // FIX: A successful PUT to the uploadUrl returns status 200/201.
-                                // The response body is the file metadata JSON.
+                                // FIX: A successful upload returns status 200/201. The response body is often empty.
+                                // We must make a final PUT request with an empty body to get the final metadata.
                                 if (xhr.status === 200 || xhr.status === 201) {
-                                    try {
-                                        const uploadedFile = JSON.parse(xhr.response);
-                                        resolve({ uploadedFile, session, file });
-                                    } catch (e) {
-                                        // This handles the case where the response body is empty, which can happen.
-                                        // We need to query the session status to get the final file metadata.
-                                        fetch(session.uploadUrl, { 
-                                            method: 'PUT', 
-                                            headers: { 'Content-Range': `bytes */${file.size}` }
-                                        })
-                                        .then(res => res.json())
-                                        .then(finalState => resolve({ uploadedFile: finalState, session, file }))
-                                        .catch(reject);
-                                    }
+                                    fetch(session.uploadUrl, { 
+                                        method: 'PUT', 
+                                        headers: { 'Content-Range': `bytes */${file.size}` }
+                                    })
+                                    .then(res => {
+                                        if (!res.ok) throw new Error(`Finalization query failed for ${file.name}`);
+                                        return res.json();
+                                    })
+                                    .then(finalState => resolve({ uploadedFile: finalState, session, file }))
+                                    .catch(reject);
                                 } else {
                                     reject(new Error(`Upload failed for ${file.name} with status: ${xhr.status}`));
                                 }
