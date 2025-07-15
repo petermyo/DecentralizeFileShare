@@ -4,8 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version implements a secure, private download model with passcode,
- * expiration date support, and a file deletion endpoint.
+ * This version implements a robust, two-stage upload process to handle
+ * large files in parallel without timing out the serverless function.
  *
  */
 
@@ -65,6 +65,7 @@ async function handleApiRequest(request, env) {
             return handleLogin(request, env);
         case '/api/auth/google/callback':
             return handleCallback(request, env);
+        // UPDATE: Using two-stage upload endpoints for large file support
         case '/api/upload/initiate':
             return handleUploadInitiate(request, env);
         case '/api/upload/finalize':
@@ -167,7 +168,6 @@ async function handleCallback(request, env) {
         const profile = await profileResponse.json();
         const userId = profile.id;
         const userName = profile.name;
-        // UPDATE: Get the profile picture URL
         const picture = profile.picture;
 
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
@@ -187,7 +187,6 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
-        // UPDATE: Add the picture URL to the JWT payload
         const token = await new jose.SignJWT({ userId, userName, picture })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
@@ -208,10 +207,10 @@ async function handleCallback(request, env) {
 async function handleUploadInitiate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
-        const { fileName, fileType } = await request.json();
+        const { files } = await request.json(); // Expect an array of files
 
-        if (!fileName || !fileType) {
-            return new Response(JSON.stringify({ error: 'Missing fileName or fileType' }), { status: 400 });
+        if (!files || !Array.isArray(files) || files.length === 0) {
+            return new Response(JSON.stringify({ error: 'Missing files array.' }), { status: 400 });
         }
 
         const tokenData = await env.APP_KV.get(`user:${userId}`, { type: 'json' });
@@ -219,33 +218,35 @@ async function handleUploadInitiate(request, env) {
 
         const accessToken = await getValidAccessToken(tokenData, userId, env);
         const folderId = await findOrCreateFolder(accessToken, env);
-
-        const now = new Date();
-        const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
-        const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-        const newFileName = `${fileName}_${date}_${time}`;
-
-        const metadata = {
-            name: newFileName,
-            parents: [folderId],
-            mimeType: fileType,
-        };
-
-        const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${accessToken}`,
-                'Content-Type': 'application/json; charset=UTF-8',
-            },
-            body: JSON.stringify(metadata)
-        });
-
-        if (!metadataRes.ok) {
-            throw new Error('Failed to initiate Google Drive upload session.');
-        }
         
-        const uploadUrl = metadataRes.headers.get('Location');
-        return new Response(JSON.stringify({ uploadUrl, newFileName }), { status: 200 });
+        const uploadSessions = await Promise.all(files.map(async (file) => {
+            const now = new Date();
+            const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
+            const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
+            const newFileName = `${file.fileName}_${date}_${time}`;
+
+            const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
+
+            const metadataRes = await fetch(`${GOOGLE_UPLOAD_API}/files?uploadType=resumable`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json; charset=UTF-8' },
+                body: JSON.stringify(metadata)
+            });
+
+            if (!metadataRes.ok) {
+                console.error(`Failed to initiate for ${file.fileName}`);
+                return null;
+            }
+            
+            return {
+                originalName: file.fileName,
+                newFileName: newFileName,
+                uploadUrl: metadataRes.headers.get('Location')
+            };
+        }));
+
+        const validSessions = uploadSessions.filter(Boolean);
+        return new Response(JSON.stringify({ sessions: validSessions }), { status: 200 });
 
     } catch (err) {
         if (err instanceof Response) return err;
@@ -338,7 +339,6 @@ async function handleMe(request, env) {
     }
     try {
         const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
-        // UPDATE: Return the picture URL along with other user data
         return new Response(JSON.stringify({
             loggedIn: true,
             userId: payload.userId,
