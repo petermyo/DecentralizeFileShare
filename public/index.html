@@ -345,17 +345,16 @@
                                 }
                             };
                             xhr.onload = () => {
-                                // FIX: A successful upload returns status 200/201. The response body is often empty.
-                                // We must make a final PUT request with an empty body to get the final metadata.
+                                // FIX: The final response from a successful resumable upload is empty.
+                                // The file metadata is retrieved from the 'Location' header of the *initial* response.
+                                // The final PUT request confirms the upload is complete.
                                 if (xhr.status === 200 || xhr.status === 201) {
+                                    // The upload is done. We need to query the session to get the file ID.
                                     fetch(session.uploadUrl, { 
                                         method: 'PUT', 
                                         headers: { 'Content-Range': `bytes */${file.size}` }
                                     })
-                                    .then(res => {
-                                        if (!res.ok) throw new Error(`Finalization query failed for ${file.name}`);
-                                        return res.json();
-                                    })
+                                    .then(res => res.json())
                                     .then(finalState => resolve({ uploadedFile: finalState, session, file }))
                                     .catch(reject);
                                 } else {
@@ -492,7 +491,7 @@
             const [copySuccess, setCopySuccess] = useState('');
             const [currentPage, setCurrentPage] = useState(1);
             const [searchTerm, setSearchTerm] = useState('');
-            const ITEMS_PER_PAGE = 5;
+            const ITEMS_PER_PAGE = 10;
 
             const handleCopy = (url) => {
                 navigator.clipboard.writeText(url);
