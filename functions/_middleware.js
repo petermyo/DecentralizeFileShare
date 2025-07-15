@@ -88,7 +88,6 @@ async function handleApiRequest(request, env) {
             return handleListCreate(request, env);
         case '/api/lists':
             return getLists(request, env);
-        // UPDATE: New endpoints for list management
         case '/api/lists/update':
             return handleListUpdate(request, env);
         case '/api/lists/delete':
@@ -526,13 +525,40 @@ async function handlePublicListGet(request, env) {
     const listData = await env.APP_KV.get(`list:${listShortCode}`, { type: 'json' });
     if (!listData) return new Response('List not found or expired', { status: 404 });
 
-    // FIX: Use the 'files' property which contains the array of file objects.
-    const filesInList = listData.files || [];
+    // FIX: Add expiration and passcode checks for lists
+    if (listData.expireDate && new Date(listData.expireDate) < new Date()) {
+        return new Response('This list has expired.', { status: 403 });
+    }
+    
+    if (listData.passcode) {
+        return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, false, true), { headers: { 'Content-Type': 'text/html' } });
+    }
 
+    const filesInList = listData.files || [];
     return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
 }
 
-// UPDATE: New handler for deleting a list
+// UPDATE: New handler for list passcode submission
+async function handlePublicListPost(request, env) {
+    const url = new URL(request.url);
+    const listShortCode = url.pathname.split('/l/')[1];
+    if (!listShortCode) return new Response('Invalid URL', { status: 400 });
+
+    const listData = await env.APP_KV.get(`list:${listShortCode}`, { type: 'json' });
+    if (!listData) return new Response('List not found or expired', { status: 404 });
+
+    const formData = await request.formData();
+    const submittedPasscode = formData.get('passcode');
+
+    if (listData.passcode && submittedPasscode === listData.passcode) {
+        const filesInList = listData.files || [];
+        return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
+    } else {
+        return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, true, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
+    }
+}
+
+
 async function handleListDelete(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
@@ -554,7 +580,6 @@ async function handleListDelete(request, env) {
     }
 }
 
-// UPDATE: New handler for updating a list
 async function handleListUpdate(request, env) {
     try {
         const userId = await getAuthenticatedUserId(request, env);
