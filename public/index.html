@@ -345,19 +345,21 @@
                                 }
                             };
                             xhr.onload = () => {
-                                if (xhr.status >= 200 && xhr.status < 300) {
-                                    // A successful resumable upload might return an empty body.
-                                    // The important part is the 200 OK status.
-                                    // We need to query the session to get the file ID.
-                                    fetch(session.uploadUrl, { method: 'PUT', headers: { 'Content-Range': `bytes */${file.size}` }})
-                                        .then(res => res.json())
-                                        .then(finalState => resolve({ uploadedFile: finalState, session, file }))
-                                        .catch(reject);
+                                // FIX: A successful PUT to the uploadUrl returns status 200/201, but the body is often empty.
+                                // We need to make a *final* PUT request with no body to get the file metadata.
+                                if (xhr.status === 200 || xhr.status === 201) {
+                                    fetch(session.uploadUrl, { 
+                                        method: 'PUT', 
+                                        headers: { 'Content-Range': `bytes */${file.size}` }
+                                    })
+                                    .then(res => res.json())
+                                    .then(finalState => resolve({ uploadedFile: finalState, session, file }))
+                                    .catch(reject);
                                 } else {
-                                    reject(new Error(`Upload failed for ${file.name}`));
+                                    reject(new Error(`Upload failed for ${file.name} with status: ${xhr.status}`));
                                 }
                             };
-                            xhr.onerror = () => reject(new Error(`Network error on ${file.name}`));
+                            xhr.onerror = () => reject(new Error(`Network error during upload for ${file.name}.`));
                             xhr.send(file);
                         });
                     });
