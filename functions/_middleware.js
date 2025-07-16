@@ -4,8 +4,9 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version adds full CRUD functionality for the admin panel and fixes the
- * public list view rendering.
+ * This single, unified file handles all backend routing for the entire application,
+ * including the main API, admin API, and public link redirects. This simplifies
+ * the project structure and resolves routing issues.
  *
  */
 
@@ -37,20 +38,10 @@ export const onRequest = async (context) => {
         return handleApiRequest(request, env);
     }
     if (path.startsWith('/s/')) {
-        if (request.method === 'GET') {
-            return handleShortUrlGet(request, env);
-        }
-        if (request.method === 'POST') {
-            return handleShortUrlPost(request, env);
-        }
+        return handleShortUrl(request, env);
     }
     if (path.startsWith('/l/')) {
-        if (request.method === 'GET') {
-            return handlePublicListGet(request, env);
-        }
-        if (request.method === 'POST') {
-            return handlePublicListPost(request, env);
-        }
+        return handlePublicList(request, env);
     }
     
     // For all other requests (e.g., /, /admin), let Pages serve the static HTML file.
