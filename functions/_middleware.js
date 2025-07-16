@@ -194,6 +194,7 @@ function handleLogin(request, env) {
     authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', `${url.origin}/api/auth/google/callback`);
     authUrl.searchParams.set('response_type', 'code');
+    // FIX: Add the 'userinfo.email' scope to get the user's email address.
     authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email');
     authUrl.searchParams.set('access_type', 'offline');
     authUrl.searchParams.set('prompt', 'consent');
@@ -225,11 +226,15 @@ async function handleCallback(request, env) {
         });
         const profile = await profileResponse.json();
         const userId = profile.id;
-        const userName = profile.name;
+        const userName = profile.name || profile.email; // Use email as a fallback for name
         const picture = profile.picture;
         const email = profile.email;
 
+        // UPDATE: Save user's name and email along with tokens
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
+            name: userName,
+            email: email,
+            picture: picture,
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
             expires_in: tokens.expires_in,
@@ -246,7 +251,7 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
-        // FIX: Add the user's email to the JWT payload.
+        // Add the user's email to the JWT payload.
         const token = await new jose.SignJWT({ userId, userName, picture, email })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
@@ -410,7 +415,6 @@ async function handleMe(request, env) {
             loggedIn: true,
             userId: payload.userId,
             userName: payload.userName,
-            userEmail: payload.userEmail,
             picture: payload.picture
         }), { headers: { 'Content-Type': 'application/json' } });
 
