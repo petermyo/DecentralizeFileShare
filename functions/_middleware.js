@@ -38,10 +38,12 @@ export const onRequest = async (context) => {
         return handleApiRequest(request, env);
     }
     if (path.startsWith('/s/')) {
-        return handleShortUrl(request, env);
+        if (request.method === 'GET') return handleShortUrlGet(request, env);
+        if (request.method === 'POST') return handleShortUrlPost(request, env);
     }
     if (path.startsWith('/l/')) {
-        return handlePublicList(request, env);
+        if (request.method === 'GET') return handlePublicListGet(request, env);
+        if (request.method === 'POST') return handlePublicListPost(request, env);
     }
     
     // For all other requests (e.g., /, /admin), let Pages serve the static HTML file.
@@ -117,6 +119,10 @@ async function handleAdminApiRequest(request, env) {
             return deleteFileAsAdmin(request, env);
         case '/api/admin/delete-list':
             return deleteListAsAdmin(request, env);
+        case '/api/admin/user-files':
+            return getUserFiles(request, env);
+        case '/api/admin/user-lists':
+            return getUserLists(request, env);
     }
     
     return new Response('Admin API route not found', { status: 404 });
