@@ -19,8 +19,8 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
-// UPDATE: Added the correct user ID to the admin list.
-const ADMIN_USER_IDS = ['118136495390756743317', '108180268584101876155'];
+// UPDATE: Corrected the User ID in the admin list.
+const ADMIN_USER_IDS = ['118136495390756743317'];
 
 
 /**
@@ -661,6 +661,128 @@ async function handleListUpdate(request, env) {
     } catch (err) {
         if (err instanceof Response) return err;
         return new Response(JSON.stringify({ error: 'Failed to update list.' }), { status: 500 });
+    }
+}
+
+
+// --- Admin API Handlers ---
+async function getStats(env) {
+    const userKeys = await env.APP_KV.list({ prefix: "user:" });
+    const fileKeys = await env.APP_KV.list({ prefix: "shorturl:" });
+    const listKeys = await env.APP_KV.list({ prefix: "list:" });
+
+    return new Response(JSON.stringify({
+        totalUsers: userKeys.keys.length,
+        totalFiles: fileKeys.keys.length,
+        totalLists: listKeys.keys.length,
+    }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function getUsers(env) {
+    const { keys } = await env.APP_KV.list({ prefix: "history:login:" });
+    const userHistoryData = await Promise.all(
+        keys.map(async (key) => {
+            const userId = key.name.split(':')[2];
+            const history = await env.APP_KV.get(key.name, { type: 'json' });
+            const lastLogin = history[history.length - 1];
+            
+            const fileHistoryKey = `history:upload:${userId}`;
+            const fileHistory = await env.APP_KV.get(fileHistoryKey, { type: 'json' }) || [];
+            
+            return {
+                userId,
+                lastLogin: lastLogin.timestamp,
+                lastLoginIp: lastLogin.ip,
+                fileCount: fileHistory.length
+            };
+        })
+    );
+    return new Response(JSON.stringify(userHistoryData), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function revokeUserAccess(request, env) {
+    try {
+        const { userId } = await request.json();
+        if (!userId) {
+            return new Response(JSON.stringify({ error: 'User ID is required.' }), { status: 400 });
+        }
+
+        await env.APP_KV.delete(`user:${userId}`);
+        await env.APP_KV.delete(`history:login:${userId}`);
+        await env.APP_KV.delete(`history:upload:${userId}`);
+        await env.APP_KV.delete(`history:list:${userId}`);
+        
+        return new Response(JSON.stringify({ success: true, message: `Access and all records revoked for user ${userId}` }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Failed to revoke access.' }), { status: 500 });
+    }
+}
+
+async function getAllFiles(env) {
+    const { keys } = await env.APP_KV.list({ prefix: "shorturl:" });
+    const files = await Promise.all(keys.map(key => env.APP_KV.get(key.name, { type: 'json' })));
+    return new Response(JSON.stringify(files), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function getAllLists(env) {
+    const { keys } = await env.APP_KV.list({ prefix: "list:" });
+    const lists = await Promise.all(keys.map(async (key) => {
+        const listData = await env.APP_KV.get(key.name, { type: 'json' });
+        return {
+            shortCode: key.name.split(':')[1],
+            ...listData
+        };
+    }));
+    return new Response(JSON.stringify(lists), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function deleteFileAsAdmin(request, env) {
+     try {
+        const { fileId, shortCode, ownerId } = await request.json();
+        if (!fileId || !shortCode || !ownerId) {
+            return new Response(JSON.stringify({ error: "Missing required data" }), { status: 400 });
+        }
+
+        const tokenData = await env.APP_KV.get(`user:${ownerId}`, { type: 'json' });
+        if (tokenData) {
+            const accessToken = await getValidAccessToken(tokenData, ownerId, env);
+            await fetch(`${GOOGLE_DRIVE_API}/files/${fileId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+        }
+
+        await env.APP_KV.delete(`shorturl:${shortCode}`);
+        
+        const historyKey = `history:upload:${ownerId}`;
+        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const updatedHistory = fileHistory.filter(file => file.fileId !== fileId);
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Failed to delete file.' }), { status: 500 });
+    }
+}
+
+async function deleteListAsAdmin(request, env) {
+    try {
+        const { shortCode, ownerId } = await request.json();
+        if (!shortCode || !ownerId) {
+            return new Response(JSON.stringify({ error: "Missing required data" }), { status: 400 });
+        }
+        
+        await env.APP_KV.delete(`list:${shortCode}`);
+
+        const historyKey = `history:list:${ownerId}`;
+        const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const shortUrl = `${new URL(request.url).origin}/l/${shortCode}`;
+        const updatedHistory = listHistory.filter(list => list.shortUrl !== shortUrl);
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Failed to delete list.' }), { status: 500 });
     }
 }
 
