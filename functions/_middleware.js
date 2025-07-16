@@ -4,9 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This single, unified file handles all backend routing for the entire application,
- * including the main API, admin API, and public link redirects. This simplifies
- * the project structure and resolves routing issues.
+ * This version adds full CRUD functionality for file lists and fixes the
+ * public list view rendering.
  *
  */
 
@@ -230,7 +229,7 @@ async function handleCallback(request, env) {
 
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             name: userName,
-            email: profile.email, // Save email for potential future use
+            email: profile.email,
             picture: picture,
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
