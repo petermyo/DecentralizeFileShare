@@ -246,6 +246,7 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
+        // FIX: Add the user's email to the JWT payload.
         const token = await new jose.SignJWT({ userId, userName, picture, email })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
