@@ -19,7 +19,8 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
-const ADMIN_EMAILS = ['myozarniaung@gmail.com'];
+// UPDATE: Changed admin check from email to the more secure User ID.
+const ADMIN_USER_IDS = ['108180268584101876155'];
 
 
 /**
@@ -171,11 +172,13 @@ async function isAdmin(request, env) {
 
     try {
         const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
-        if (!payload || !payload.userId || !payload.email) {
+        // UPDATE: Check for userId instead of email
+        if (!payload || !payload.userId) {
             throw new Error('Invalid token payload.');
         }
 
-        if (!ADMIN_EMAILS.includes(payload.email)) {
+        // UPDATE: Check against the ADMIN_USER_IDS array
+        if (!ADMIN_USER_IDS.includes(payload.userId)) {
             return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
         }
 
@@ -194,8 +197,8 @@ function handleLogin(request, env) {
     authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', `${url.origin}/api/auth/google/callback`);
     authUrl.searchParams.set('response_type', 'code');
-    // FIX: Add the 'userinfo.email' scope to get the user's email address.
-    authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email');
+    // UPDATE: Removed email scope as it's no longer needed for admin checks
+    authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile');
     authUrl.searchParams.set('access_type', 'offline');
     authUrl.searchParams.set('prompt', 'consent');
     return Response.redirect(authUrl.toString(), 302);
@@ -226,14 +229,12 @@ async function handleCallback(request, env) {
         });
         const profile = await profileResponse.json();
         const userId = profile.id;
-        const userName = profile.name || profile.email; // Use email as a fallback for name
+        const userName = profile.name || profile.email;
         const picture = profile.picture;
-        const email = profile.email;
 
-        // UPDATE: Save user's name and email along with tokens
+        // UPDATE: No longer storing email in the user record
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             name: userName,
-            email: email,
             picture: picture,
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
@@ -251,8 +252,8 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
-        // Add the user's email to the JWT payload.
-        const token = await new jose.SignJWT({ userId, userName, picture, email })
+        // UPDATE: No longer including email in the JWT
+        const token = await new jose.SignJWT({ userId, userName, picture })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
             .setExpirationTime('24h')
