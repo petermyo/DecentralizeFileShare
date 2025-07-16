@@ -12,19 +12,15 @@
 import * as jose from 'jose';
 
 // --- Admin Configuration ---
-// Add the email addresses of authorized administrators here.
 const ADMIN_EMAILS = ['myozarniaung@gmail.com'];
 
-/**
- * Main request handler. This function is the entry point for all /admin/* requests.
- */
+// --- Main Handler for all /api/admin/* requests ---
 export const onRequest = async (context) => {
     const { request, env } = context;
     
     // First, run the authentication and authorization middleware
     const authResponse = await isAdmin(request, env);
     if (authResponse.status !== 200) {
-        // If not an admin, return the error response from the middleware
         return authResponse;
     }
     
@@ -45,8 +41,17 @@ async function handleAdminApiRequest(request, env) {
             return getStats(env);
         case '/api/admin/users':
             return getUsers(env);
-        case '/api/admin/revoke':
+        case '/api/admin/revoke': // Deletes a user and their data
             return revokeUserAccess(request, env);
+        // UPDATE: New endpoints for full CRUD
+        case '/api/admin/files':
+            return getAllFiles(env);
+        case '/api/admin/lists':
+            return getAllLists(env);
+        case '/api/admin/delete-file':
+            return deleteFileAsAdmin(request, env);
+        case '/api/admin/delete-list':
+            return deleteListAsAdmin(request, env);
     }
 
     return new Response('Admin API route not found', { status: 404 });
@@ -66,12 +71,10 @@ async function isAdmin(request, env) {
             throw new Error('Invalid token payload.');
         }
 
-        // Check if the user's email is in the admin list
         if (!ADMIN_EMAILS.includes(payload.email)) {
             return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
         }
 
-        // Return a successful response. The main handler will not use the body.
         return new Response(JSON.stringify({ success: true }), { status: 200 });
 
     } catch (err) {
@@ -123,16 +126,85 @@ async function revokeUserAccess(request, env) {
             return new Response(JSON.stringify({ error: 'User ID is required.' }), { status: 400 });
         }
 
-        // Delete the user's token, effectively logging them out and revoking access
+        // Delete all data associated with the user
         await env.APP_KV.delete(`user:${userId}`);
+        await env.APP_KV.delete(`history:login:${userId}`);
+        await env.APP_KV.delete(`history:upload:${userId}`);
+        await env.APP_KV.delete(`history:list:${userId}`);
         
-        // Note: This does not revoke Google's grant. The user would need to do that
-        // from their Google account settings. This action only revokes their access
-        // to *your* application.
+        // Note: This does not delete files from their Google Drive, only app access and records.
 
-        return new Response(JSON.stringify({ success: true, message: `Access revoked for user ${userId}` }), { status: 200 });
+        return new Response(JSON.stringify({ success: true, message: `Access and all records revoked for user ${userId}` }), { status: 200 });
     } catch (err) {
         return new Response(JSON.stringify({ error: 'Failed to revoke access.' }), { status: 500 });
+    }
+}
+
+async function getAllFiles(env) {
+    const { keys } = await env.APP_KV.list({ prefix: "shorturl:" });
+    const files = await Promise.all(keys.map(key => env.APP_KV.get(key.name, { type: 'json' })));
+    return new Response(JSON.stringify(files), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function getAllLists(env) {
+    const { keys } = await env.APP_KV.list({ prefix: "list:" });
+    const lists = await Promise.all(keys.map(async (key) => {
+        const listData = await env.APP_KV.get(key.name, { type: 'json' });
+        return {
+            shortCode: key.name.split(':')[1],
+            ...listData
+        };
+    }));
+    return new Response(JSON.stringify(lists), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function deleteFileAsAdmin(request, env) {
+     try {
+        const { fileId, shortCode, ownerId } = await request.json();
+        if (!fileId || !shortCode || !ownerId) {
+            return new Response(JSON.stringify({ error: "Missing required data" }), { status: 400 });
+        }
+
+        const tokenData = await env.APP_KV.get(`user:${ownerId}`, { type: 'json' });
+        if (tokenData) {
+            const accessToken = await getValidAccessToken(tokenData, ownerId, env);
+            await fetch(`${GOOGLE_DRIVE_API}/files/${fileId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+        }
+
+        await env.APP_KV.delete(`shorturl:${shortCode}`);
+        
+        const historyKey = `history:upload:${ownerId}`;
+        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const updatedHistory = fileHistory.filter(file => file.fileId !== fileId);
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Failed to delete file.' }), { status: 500 });
+    }
+}
+
+async function deleteListAsAdmin(request, env) {
+    try {
+        const { shortCode, ownerId } = await request.json();
+        if (!shortCode || !ownerId) {
+            return new Response(JSON.stringify({ error: "Missing required data" }), { status: 400 });
+        }
+        
+        await env.APP_KV.delete(`list:${shortCode}`);
+
+        const historyKey = `history:list:${ownerId}`;
+        const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const shortUrl = `${new URL(request.url).origin}/l/${shortCode}`;
+        const updatedHistory = listHistory.filter(list => list.shortUrl !== shortUrl);
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Failed to delete list.' }), { status: 500 });
     }
 }
 
@@ -149,4 +221,30 @@ function getCookie(request, name) {
         if (parts[0] === name) return parts[1];
     }
     return null;
+}
+
+async function getValidAccessToken(tokenData, userId, env) {
+    const { access_token, refresh_token, iat, expires_in } = tokenData;
+    if (Date.now() / 1000 - iat < expires_in - 300) {
+        return access_token;
+    }
+    const refreshResponse = await fetch(GOOGLE_TOKEN_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            client_id: env.GOOGLE_CLIENT_ID,
+            client_secret: env.GOOGLE_CLIENT_SECRET,
+            refresh_token,
+            grant_type: 'refresh_token',
+        }),
+    });
+    const newTokens = await refreshResponse.json();
+    if (newTokens.error) throw new Error('Failed to refresh Google token.');
+    await env.APP_KV.put(`user:${userId}`, JSON.stringify({
+        ...tokenData,
+        access_token: newTokens.access_token,
+        expires_in: newTokens.expires_in,
+        iat: Math.floor(Date.now() / 1000),
+    }));
+    return newTokens.access_token;
 }
