@@ -19,8 +19,8 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
-// UPDATE: Changed admin check from email to the more secure User ID.
-const ADMIN_USER_IDS = ['118136495390756743317'];
+// UPDATE: Added the correct user ID to the admin list.
+const ADMIN_USER_IDS = ['118136495390756743317', '108180268584101876155'];
 
 
 /**
@@ -172,12 +172,10 @@ async function isAdmin(request, env) {
 
     try {
         const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
-        // UPDATE: Check for userId instead of email
         if (!payload || !payload.userId) {
             throw new Error('Invalid token payload.');
         }
 
-        // UPDATE: Check against the ADMIN_USER_IDS array
         if (!ADMIN_USER_IDS.includes(payload.userId)) {
             return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
         }
@@ -197,7 +195,6 @@ function handleLogin(request, env) {
     authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', `${url.origin}/api/auth/google/callback`);
     authUrl.searchParams.set('response_type', 'code');
-    // UPDATE: Removed email scope as it's no longer needed for admin checks
     authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile');
     authUrl.searchParams.set('access_type', 'offline');
     authUrl.searchParams.set('prompt', 'consent');
@@ -232,7 +229,6 @@ async function handleCallback(request, env) {
         const userName = profile.name || profile.email;
         const picture = profile.picture;
 
-        // UPDATE: No longer storing email in the user record
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             name: userName,
             picture: picture,
@@ -252,7 +248,6 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
-        // UPDATE: No longer including email in the JWT
         const token = await new jose.SignJWT({ userId, userName, picture })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
