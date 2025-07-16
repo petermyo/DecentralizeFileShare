@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - ဒီဖိုင်</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; }
+    </style>
+     <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        function AdminApp() {
+            const [user, setUser] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [stats, setStats] = useState(null);
+            const [users, setUsers] = useState([]);
+            const [allFiles, setAllFiles] = useState([]);
+            const [allLists, setAllLists] = useState([]);
+            const [error, setError] = useState('');
+            const [view, setView] = useState('dashboard');
+
+            const fetchData = useCallback(async () => {
+                try {
+                    const [statsRes, usersRes, filesRes, listsRes] = await Promise.all([
+                        fetch('/api/admin/stats'),
+                        fetch('/api/admin/users'),
+                        fetch('/api/admin/files'),
+                        fetch('/api/admin/lists')
+                    ]);
+                    if (!statsRes.ok || !usersRes.ok || !filesRes.ok || !listsRes.ok) {
+                        throw new Error('Failed to fetch admin data. You may not have permission.');
+                    }
+                    const statsData = await statsRes.json();
+                    const usersData = await usersRes.json();
+                    const filesData = await filesRes.json();
+                    const listsData = await listsRes.json();
+                    setStats(statsData);
+                    setUsers(usersData);
+                    setAllFiles(filesData);
+                    setAllLists(listsData);
+                } catch (err) {
+                    setError(err.message);
+                }
+            }, []);
+
+            useEffect(() => {
+                const checkUserStatus = async () => {
+                    setIsLoading(true);
+                    try {
+                        const response = await fetch('/api/me');
+                        const data = await response.json();
+                        if (data.loggedIn) {
+                            setUser({ name: data.userName, picture: data.picture });
+                            await fetchData();
+                        } else {
+                            setError('Please log in as an administrator.');
+                        }
+                    } catch (err) {
+                        setError('An error occurred while checking your status.');
+                        console.error("Failed to check user status:", err);
+                    } finally {
+                        setIsLoading(false);
+                    }
+                };
+                checkUserStatus();
+            }, [fetchData]);
+
+            const handleRevoke = async (userId) => {
+                if (window.confirm(`Are you sure you want to revoke access for user ${userId}? This will delete all their records.`)) {
+                    try {
+                        const response = await fetch('/api/admin/revoke', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ userId })
+                        });
+                        if (!response.ok) throw new Error('Failed to revoke access.');
+                        fetchData(); // Refresh all data
+                    } catch (err) {
+                        alert(err.message);
+                    }
+                }
+            };
+            
+            const handleDeleteFile = async (file) => {
+                const shortCode = file.shortUrl ? file.shortUrl.split('/s/')[1] : null;
+                if (window.confirm(`Are you sure you want to delete file "${file.name}"? This action cannot be undone.`)) {
+                    try {
+                        const response = await fetch('/api/admin/delete-file', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ fileId: file.id, shortCode: shortCode, ownerId: file.ownerId })
+                        });
+                        if (!response.ok) throw new Error('Failed to delete file.');
+                        fetchData(); // Refresh all data
+                    } catch (err) {
+                        alert(err.message);
+                    }
+                }
+            };
+            
+            const handleDeleteList = async (list) => {
+                if (window.confirm(`Are you sure you want to delete this list? This action cannot be undone.`)) {
+                    try {
+                        const response = await fetch('/api/admin/delete-list', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ shortCode: list.shortCode, ownerId: list.ownerId })
+                        });
+                        if (!response.ok) throw new Error('Failed to delete list.');
+                        fetchData(); // Refresh all data
+                    } catch (err) {
+                        alert(err.message);
+                    }
+                }
+            };
+
+            if (isLoading) {
+                return <div className="min-h-screen flex items-center justify-center text-gray-700">Loading Admin Panel...</div>;
+            }
+
+            if (error) {
+                 return (
+                    <div className="min-h-screen flex flex-col items-center justify-center text-center p-4">
+                        <h1 className="text-2xl font-bold text-red-600 mb-4">Access Denied</h1>
+                        <p className="text-slate-600 mb-6">{error}</p>
+                        <a href="/" className="bg-sky-500 hover:bg-sky-600 text-white font-bold py-2 px-4 rounded-lg">Go to Main Site</a>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex h-screen bg-slate-100">
+                    <aside className="w-64 bg-slate-800 text-white flex flex-col">
+                        <div className="h-16 flex items-center justify-center text-xl font-bold border-b border-slate-700">Admin Panel</div>
+                        <nav className="flex-1 px-2 py-4 space-y-1">
+                            <button onClick={() => setView('dashboard')} className={`w-full flex items-center px-2 py-2 text-sm font-medium rounded-md ${view === 'dashboard' ? 'bg-slate-900' : 'hover:bg-slate-700'}`}>Dashboard</button>
+                            <button onClick={() => setView('users')} className={`w-full flex items-center px-2 py-2 text-sm font-medium rounded-md ${view === 'users' ? 'bg-slate-900' : 'hover:bg-slate-700'}`}>Users</button>
+                            <button onClick={() => setView('files')} className={`w-full flex items-center px-2 py-2 text-sm font-medium rounded-md ${view === 'files' ? 'bg-slate-900' : 'hover:bg-slate-700'}`}>Files</button>
+                            <button onClick={() => setView('lists')} className={`w-full flex items-center px-2 py-2 text-sm font-medium rounded-md ${view === 'lists' ? 'bg-slate-900' : 'hover:bg-slate-700'}`}>Lists</button>
+                        </nav>
+                    </aside>
+                    <div className="flex-1 flex flex-col overflow-hidden">
+                        <header className="bg-white shadow-sm h-16 flex justify-end items-center px-6">
+                             <div className="flex items-center space-x-3">
+                                <img className="h-8 w-8 rounded-full" src={user.picture} alt="Admin" />
+                                <span>{user.name}</span>
+                            </div>
+                        </header>
+                        <main className="flex-1 overflow-x-hidden overflow-y-auto bg-slate-100 p-6">
+                            {view === 'dashboard' && <Dashboard stats={stats} />}
+                            {view === 'users' && <UsersTable users={users} onRevoke={handleRevoke} />}
+                            {view === 'files' && <AllFilesTable files={allFiles} onDelete={handleDeleteFile} />}
+                            {view === 'lists' && <AllListsTable lists={allLists} onDelete={handleDeleteList} />}
+                        </main>
+                    </div>
+                </div>
+            );
+        }
+
+        const Dashboard = ({ stats }) => (
+            <div>
+                <h1 className="text-2xl font-bold text-slate-800 mb-6">Dashboard</h1>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div className="bg-white p-6 rounded-lg shadow">
+                        <h3 className="text-sm font-medium text-slate-500">Total Users</h3>
+                        <p className="mt-1 text-3xl font-semibold text-slate-900">{stats?.totalUsers}</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg shadow">
+                        <h3 className="text-sm font-medium text-slate-500">Total Files Shared</h3>
+                        <p className="mt-1 text-3xl font-semibold text-slate-900">{stats?.totalFiles}</p>
+                    </div>
+                     <div className="bg-white p-6 rounded-lg shadow">
+                        <h3 className="text-sm font-medium text-slate-500">Total Lists Created</h3>
+                        <p className="mt-1 text-3xl font-semibold text-slate-900">{stats?.totalLists}</p>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const UsersTable = ({ users, onRevoke }) => (
+            <div>
+                <h1 className="text-2xl font-bold text-slate-800 mb-6">User Management</h1>
+                <div className="bg-white shadow rounded-lg overflow-hidden">
+                    <table className="min-w-full divide-y divide-slate-200">
+                        <thead className="bg-slate-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">User ID</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Last Login</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">File Count</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-slate-200">
+                            {users.map(user => (
+                                <tr key={user.userId}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{user.userId}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{new Date(user.lastLogin).toLocaleString()}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{user.fileCount}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                        <button onClick={() => onRevoke(user.userId)} className="text-red-600 hover:text-red-900">Revoke Access</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+        
+        const AllFilesTable = ({ files, onDelete }) => (
+             <div>
+                <h1 className="text-2xl font-bold text-slate-800 mb-6">All Shared Files</h1>
+                <div className="bg-white shadow rounded-lg overflow-hidden">
+                    <table className="min-w-full divide-y divide-slate-200">
+                        <thead className="bg-slate-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">File Name</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Owner ID</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-slate-200">
+                            {files.map(file => (
+                                <tr key={file.id}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 truncate max-w-md">{file.name}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{file.ownerId}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                        <button onClick={() => onDelete(file)} className="text-red-600 hover:text-red-900">Delete</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+        
+        const AllListsTable = ({ lists, onDelete }) => (
+             <div>
+                <h1 className="text-2xl font-bold text-slate-800 mb-6">All Shared Lists</h1>
+                <div className="bg-white shadow rounded-lg overflow-hidden">
+                    <table className="min-w-full divide-y divide-slate-200">
+                        <thead className="bg-slate-50">
+                            <tr>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">List URL</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">File Count</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Owner ID</th>
+                                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-slate-200">
+                            {lists.map(list => (
+                                <tr key={list.shortCode}>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-sky-600"><a href={`/l/${list.shortCode}`} target="_blank">{`/l/${list.shortCode}`}</a></td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{list.files.length}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{list.ownerId}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                                        <button onClick={() => onDelete(list)} className="text-red-600 hover:text-red-900">Delete</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<AdminApp />);
+    </script>
+</body>
+</html>
