@@ -8,7 +8,6 @@
  * admin panel and the public list view.
  *
  */
-
 // --- Import JWT Library ---
 import * as jose from 'jose';
 
