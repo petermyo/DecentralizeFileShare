@@ -117,6 +117,10 @@ async function handleAdminApiRequest(request, env) {
             return deleteFileAsAdmin(request, env);
         case '/api/admin/delete-list':
             return deleteListAsAdmin(request, env);
+        case '/api/admin/user-files':
+            return getUserFiles(request, env);
+        case '/api/admin/user-lists':
+            return getUserLists(request, env);
     }
     
     return new Response('Admin API route not found', { status: 404 });
