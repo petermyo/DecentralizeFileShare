@@ -4,8 +4,8 @@
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version adds full CRUD functionality for file lists and fixes the
- * public list view rendering.
+ * This version fixes the routing logic to correctly handle requests for the
+ * admin panel and the public list view.
  *
  */
 
@@ -27,33 +27,17 @@ export const onRequest = async (context) => {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Route API requests
-    if (path.startsWith('/api/')) {
-        return handleApiRequest(request, env);
+    // FIX: The admin panel has its own _middleware.js file.
+    // We let the Pages routing system handle it by calling next().
+    // The same applies to the main API and other function routes.
+    if (path.startsWith('/api/') || path.startsWith('/s/') || path.startsWith('/l/')) {
+        // Let the file-based routing handle these dynamic requests.
+        return next();
     }
 
-    // Route short URL redirects for individual files
-    if (path.startsWith('/s/')) {
-        if (request.method === 'GET') {
-            return handleShortUrlGet(request, env);
-        }
-        if (request.method === 'POST') {
-            return handleShortUrlPost(request, env);
-        }
-    }
-    
-    // Route public list views
-    if (path.startsWith('/l/')) {
-        if (request.method === 'GET') {
-            return handlePublicListGet(request, env);
-        }
-        if (request.method === 'POST') {
-            return handlePublicListPost(request, env);
-        }
-    }
-
-
-    // For all other requests, pass through to the static asset handler (serves the frontend)
+    // For the root path or any other path not caught above, serve the main frontend app.
+    // This is typically handled by the static asset handler automatically,
+    // but returning next() ensures it falls through correctly.
     return next();
 }
 
@@ -195,7 +179,7 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
-        const token = await new jose.SignJWT({ userId, userName, picture })
+        const token = await new jose.SignJWT({ userId, userName, picture, email: profile.email })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
             .setExpirationTime('24h')
@@ -233,7 +217,7 @@ async function handleUploadInitiate(request, env) {
             const now = new Date();
             const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
             const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const newFileName = `${file.fileName}_${date}_${time}`;
+            const newFileName = `${time}_${date}_${file.fileName}`;
 
             const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
 
@@ -293,7 +277,7 @@ async function handleUploadFinalize(request, env) {
             fileId, fileName, originalName, fileSize,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
-            passcode: passcode || null, // FIX: Ensure passcode string is stored for editing
+            passcode: passcode || null,
             expireDate: expireDate || null
         };
         const historyKey = `history:upload:${userId}`;
@@ -494,7 +478,7 @@ async function handleListCreate(request, env) {
             shortUrl: listShortUrl,
             fileCount: listFiles.length,
             createdAt: new Date().toISOString(),
-            passcode: passcode || null, // FIX: Store the actual passcode, not a boolean
+            passcode: passcode || null,
             expireDate: expireDate || null
         });
         await env.APP_KV.put(listHistoryKey, JSON.stringify(existingListHistory));
@@ -598,7 +582,6 @@ async function handleListUpdate(request, env) {
         const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = listHistory.map(list => {
             if (list.shortUrl === shortUrl) {
-                // FIX: Store the actual passcode, not just a boolean
                 return { ...list, passcode: passcode || null, expireDate: expireDate || null };
             }
             return list;
