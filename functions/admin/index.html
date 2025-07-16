@@ -27,12 +27,12 @@
             const [users, setUsers] = useState([]);
             const [error, setError] = useState('');
             const [view, setView] = useState('dashboard');
+
             const fetchData = useCallback(async () => {
                 try {
-                    // FIX: Use absolute URLs for fetch requests
                     const [statsRes, usersRes] = await Promise.all([
-                        fetch(`${window.location.origin}/api/admin/stats`),
-                        fetch(`${window.location.origin}/api/admin/users`)
+                        fetch('/api/admin/stats'),
+                        fetch('/api/admin/users')
                     ]);
                     if (!statsRes.ok || !usersRes.ok) {
                         throw new Error('Failed to fetch admin data. You may not have permission.');
@@ -50,8 +50,7 @@
                 const checkUserStatus = async () => {
                     setIsLoading(true);
                     try {
-                        // FIX: Use an absolute URL for the fetch request.
-                        const response = await fetch(`${window.location.origin}/api/me`);
+                        const response = await fetch('/api/me');
                         const data = await response.json();
                         if (data.loggedIn) {
                             setUser({ name: data.userName, picture: data.picture });
@@ -72,8 +71,7 @@
             const handleRevoke = async (userId) => {
                 if (window.confirm(`Are you sure you want to revoke access for user ${userId}? They will be logged out immediately.`)) {
                     try {
-                        // FIX: Use an absolute URL for the fetch request.
-                        const response = await fetch(`${window.location.origin}/api/admin/revoke`, {
+                        const response = await fetch('/api/admin/revoke', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ userId })
