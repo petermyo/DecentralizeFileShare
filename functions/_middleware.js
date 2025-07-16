@@ -8,7 +8,6 @@
  * public list view rendering.
  *
  */
-
 // --- Import JWT Library ---
 import * as jose from 'jose';
 
