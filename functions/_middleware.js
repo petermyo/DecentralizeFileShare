@@ -187,14 +187,14 @@ async function isAdmin(request, env) {
 }
 
 
-// --- Main API Route Handlers ---
+// --- Route Handlers ---
 function handleLogin(request, env) {
     const url = new URL(request.url);
     const authUrl = new URL(GOOGLE_AUTH_URL);
     authUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', `${url.origin}/api/auth/google/callback`);
     authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile');
+    authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email');
     authUrl.searchParams.set('access_type', 'offline');
     authUrl.searchParams.set('prompt', 'consent');
     return Response.redirect(authUrl.toString(), 302);
@@ -227,6 +227,7 @@ async function handleCallback(request, env) {
         const userId = profile.id;
         const userName = profile.name;
         const picture = profile.picture;
+        const email = profile.email;
 
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             access_token: tokens.access_token,
@@ -245,7 +246,7 @@ async function handleCallback(request, env) {
              throw new Error('Server configuration error: JWT secret is missing.');
         }
 
-        const token = await new jose.SignJWT({ userId, userName, picture, email: profile.email })
+        const token = await new jose.SignJWT({ userId, userName, picture, email })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
             .setExpirationTime('24h')
@@ -358,6 +359,7 @@ async function handleUploadFinalize(request, env) {
         return new Response(JSON.stringify({ error: 'Failed to finalize upload.' }), { status: 500 });
     }
 }
+
 
 async function handleShortUrlGet(request, env) {
     const url = new URL(request.url);
