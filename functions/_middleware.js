@@ -410,6 +410,7 @@ async function handleMe(request, env) {
             loggedIn: true,
             userId: payload.userId,
             userName: payload.userName,
+            userName: payload.userEmail,
             picture: payload.picture
         }), { headers: { 'Content-Type': 'application/json' } });
 
