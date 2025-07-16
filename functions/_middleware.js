@@ -19,8 +19,7 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
-// UPDATE: Corrected the User ID in the admin list.
-const ADMIN_USER_IDS = ['118136495390756743317'];
+const ADMIN_USER_IDS = ['118136495390756743317', '108180268584101876155'];
 
 
 /**
@@ -39,10 +38,10 @@ export const onRequest = async (context) => {
         return handleApiRequest(request, env);
     }
     if (path.startsWith('/s/')) {
-        return handleShortUrlGet(request, env);
+        return handleShortUrl(request, env);
     }
     if (path.startsWith('/l/')) {
-        return handlePublicListGet(request, env);
+        return handlePublicList(request, env);
     }
     
     // For all other requests (e.g., /, /admin), let Pages serve the static HTML file.
@@ -231,6 +230,7 @@ async function handleCallback(request, env) {
 
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
             name: userName,
+            email: profile.email, // Save email for potential future use
             picture: picture,
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
@@ -689,8 +689,12 @@ async function getUsers(env) {
             const fileHistoryKey = `history:upload:${userId}`;
             const fileHistory = await env.APP_KV.get(fileHistoryKey, { type: 'json' }) || [];
             
+            const userData = await env.APP_KV.get(`user:${userId}`, {type: 'json'}) || {};
+
             return {
                 userId,
+                name: userData.name,
+                picture: userData.picture,
                 lastLogin: lastLogin.timestamp,
                 lastLoginIp: lastLogin.ip,
                 fileCount: fileHistory.length
