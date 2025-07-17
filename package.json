@@ -1,3 +1,4 @@
+// --- package.json ---
 {
   "name": "decentralized-file-share-v2",
   "private": true,
@@ -7,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler pages deploy dist"
+    "deploy": "npm run build && wrangler pages deploy public"
   },
   "dependencies": {
     "hono": "^4.4.12",
@@ -17,8 +18,6 @@
     "react-router-dom": "^6.24.0"
   },
   "devDependencies": {
-    "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.22",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.38",
@@ -26,4 +25,49 @@
     "vite": "^5.2.0",
     "wrangler": "^3.57.2"
   }
+}
+
+// --- vite.config.js ---
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    outDir: 'public',
+  },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8788',
+      '/s': 'http://localhost:8788',
+      '/l': 'http://localhost:8788',
+    },
+  },
+})
+
+// --- tailwind.config.js ---
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {
+      colors: {
+        'theme-primary': 'var(--color-primary)',
+        'theme-secondary': 'var(--color-secondary)',
+        'theme-accent': 'var(--color-accent)',
+      }
+    },
+  },
+  plugins: [],
+}
+
+// --- postcss.config.js ---
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
 }
