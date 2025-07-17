@@ -1,3 +1,4 @@
+// --- /src/contexts/AuthContext.jsx ---
 import React, { createContext, useState, useEffect, useContext } from 'react';
 
 const AuthContext = createContext(null);
@@ -7,17 +8,15 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  // FIX: Add isAdmin state for admin panel authorization
   const [isAdmin, setIsAdmin] = useState(false);
 
-  useEffect(() => {
-    const checkUserStatus = async () => {
+  const checkUserStatus = async () => {
       try {
         const response = await fetch('/api/me');
         if (response.ok) {
           const data = await response.json();
           setUser(data);
-          // Check if the user is an admin after fetching their data
+          // After getting user, check if they are an admin
           const adminCheckResponse = await fetch('/api/admin/check');
           if (adminCheckResponse.ok) {
               setIsAdmin(true);
@@ -29,10 +28,12 @@ export const AuthProvider = ({ children }) => {
         setIsLoading(false);
       }
     };
+
+  useEffect(() => {
     checkUserStatus();
   }, []);
 
-  const value = { user, setUser, isLoading, isAdmin };
+  const value = { user, setUser, isLoading, isAdmin, refreshAuth: checkUserStatus };
 
   return (
     <AuthContext.Provider value={value}>
