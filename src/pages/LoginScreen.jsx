@@ -12,18 +12,9 @@ const LoginScreen = () => {
         </p>
         
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-left mb-12">
-            <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
-                <h4 className="font-bold text-slate-800 mb-2">Complete Control</h4>
-                <p className="text-sm text-slate-600">Files are stored in a dedicated folder on your own Google Drive, not our servers.</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
-                <h4 className="font-bold text-slate-800 mb-2">Large File Support</h4>
-                <p className="text-sm text-slate-600">Upload any file up to 5TB, with a generous 750GB daily limit.</p>
-            </div>
-            <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200">
-                <h4 className="font-bold text-slate-800 mb-2">Secure Sharing</h4>
-                <p className="text-sm text-slate-600">Protect your links with optional passcodes and expiration dates.</p>
-            </div>
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200"><h4 className="font-bold text-slate-800 mb-2">Complete Control</h4><p className="text-sm text-slate-600">Files are stored in a dedicated folder on your own Google Drive, not our servers.</p></div>
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200"><h4 className="font-bold text-slate-800 mb-2">Large File Support</h4><p className="text-sm text-slate-600">Upload any file up to 5TB, with a generous 750GB daily limit.</p></div>
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-slate-200"><h4 className="font-bold text-slate-800 mb-2">Secure Sharing</h4><p className="text-sm text-slate-600">Protect your links with optional passcodes and expiration dates.</p></div>
         </div>
 
         <a href="/api/auth/google/login" className="inline-block bg-theme-primary hover:bg-theme-secondary text-white font-bold py-4 px-10 rounded-lg transition duration-300 ease-in-out transform hover:scale-105 text-lg shadow-xl hover:shadow-2xl">
