@@ -1,4 +1,3 @@
-// --- vite.config.js ---
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
@@ -6,10 +5,12 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   build: {
-    // UPDATE: Change the output directory from 'dist' to 'public'
+    // This line tells Vite to create a 'public' folder for the build output,
+    // matching your Cloudflare Pages project settings.
     outDir: 'public',
   },
   server: {
+    // This proxy is for local development and does not affect the build.
     proxy: {
       '/api': 'http://localhost:8788',
       '/s': 'http://localhost:8788',
@@ -17,30 +18,3 @@ export default defineConfig({
     },
   },
 })
-
-// --- tailwind.config.js (no changes) ---
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
-  theme: {
-    extend: {
-      colors: {
-        'theme-primary': 'var(--color-primary)',
-        'theme-secondary': 'var(--color-secondary)',
-        'theme-accent': 'var(--color-accent)',
-      }
-    },
-  },
-  plugins: [],
-}
-
-// --- postcss.config.js (no changes) ---
-export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-}
