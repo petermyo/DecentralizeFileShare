@@ -1,12 +1,10 @@
 // --- /src/pages/admin/AdminDashboard.jsx ---
 import React, { useState, useEffect } from 'react';
-
 const AdminDashboard = () => {
     const [stats, setStats] = useState(null);
     useEffect(() => {
         fetch('/api/admin/stats').then(res => res.json()).then(setStats);
     }, []);
-
     return (
         <div>
             <h1 className="text-2xl font-bold text-slate-800 mb-6">Dashboard</h1>
