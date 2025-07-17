@@ -1,3 +1,4 @@
+// --- /src/pages/LoginScreen.jsx ---
 import React from 'react';
 
 const LoginScreen = () => {
@@ -31,5 +32,4 @@ const LoginScreen = () => {
     </div>
   );
 };
-
 export default LoginScreen;
