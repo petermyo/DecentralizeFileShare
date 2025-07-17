@@ -10,13 +10,6 @@
  */
 import { Hono } from 'hono'
 
-const app = new Hono()
-
-app.get('/', (c) => {
-  return c.text('Hello Hono!')
-})
-
-
 // import { Hono } from 'hono';
 // import { serveStatic } from 'hono/cloudflare-pages';
 // import * as jose from 'jose';
@@ -30,6 +23,10 @@ const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 const ADMIN_USER_IDS = ['118136495390756743317', '108180268584101876155'];
 
 const app = new Hono();
+
+app.get('/', (c) => {
+  return c.text('Hello Hono!')
+})
 
 // --- JWT & Cookie Helpers ---
 const getJwtSecret = (c) => new TextEncoder().encode(c.env.JWT_SECRET);
