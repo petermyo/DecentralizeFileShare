@@ -2,11 +2,9 @@
 import React from 'react';
 import Header from '../components/layout/Header';
 import { useData } from '../contexts/DataContext';
-// ... other imports
 
 const MainLayout = () => {
     const { files, lists, isLoading, refreshData } = useData();
-    // ... other state management for modals, etc.
 
     if (isLoading) {
         return <div>Loading dashboard...</div>;
@@ -19,14 +17,14 @@ const MainLayout = () => {
                 <h1 className="text-2xl font-bold mb-6">My Dashboard</h1>
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                     <div className="lg:col-span-4">
-                        {/* <UploadForm onUploadComplete={refreshData} /> */}
-                        <p>Upload Form Here</p>
+                        {/* Placeholder for UploadForm */}
+                        <div className="bg-white p-6 rounded-lg shadow-lg">Upload Form Here</div>
                     </div>
                     <div className="lg:col-span-8">
-                        {/* <FileTable files={files} /> */}
-                        <p>Files Table Here</p>
-                        {/* <ListsTable lists={lists} /> */}
-                        <p>Lists Table Here</p>
+                        {/* Placeholder for FileTable */}
+                        <div className="bg-white p-6 rounded-lg shadow-lg mb-8">Files Table Here</div>
+                        {/* Placeholder for ListsTable */}
+                        <div className="bg-white p-6 rounded-lg shadow-lg">Lists Table Here</div>
                     </div>
                 </div>
             </main>
