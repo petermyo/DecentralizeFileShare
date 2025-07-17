@@ -8,12 +8,12 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import MainLayout from './pages/MainLayout';
 import LoginScreen from './pages/LoginScreen';
 import UserSettings from './pages/UserSettings';
-import AdminLayout from './pages/admin/AdminLayout';
-import AdminDashboard from './pages/admin/AdminDashboard';
-import AdminUsers from './pages/admin/AdminUsers';
-import AdminUserDetail from './pages/admin/AdminUserDetail';
-import AdminFiles from './pages/admin/AdminFiles';
-import AdminLists from './pages/admin/AdminLists';
+import AdminLayout from './admin/AdminLayout';
+import AdminDashboard from './admin/AdminDashboard';
+import AdminUsers from './admin/AdminUsers';
+import AdminUserDetail from './admin/AdminUserDetail';
+import AdminFiles from './admin/AdminFiles';
+import AdminLists from './admin/AdminLists';
 
 const PrivateRoute = ({ children }) => {
   const { user, isLoading } = useAuth();
