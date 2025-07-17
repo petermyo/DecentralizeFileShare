@@ -5,6 +5,10 @@ import react from '@vitejs/plugin-react'
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // UPDATE: Change the output directory from 'dist' to 'public'
+    outDir: 'public',
+  },
   server: {
     proxy: {
       '/api': 'http://localhost:8788',
@@ -14,7 +18,7 @@ export default defineConfig({
   },
 })
 
-// --- tailwind.config.js ---
+// --- tailwind.config.js (no changes) ---
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -33,7 +37,7 @@ export default {
   plugins: [],
 }
 
-// --- postcss.config.js ---
+// --- postcss.config.js (no changes) ---
 export default {
   plugins: {
     tailwindcss: {},
