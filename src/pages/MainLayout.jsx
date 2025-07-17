@@ -1,15 +1,30 @@
 // --- /src/pages/MainLayout.jsx ---
-import React from 'react';
+// This is the main user dashboard.
+import React, { useState, useEffect, useCallback } from 'react';
 import Header from '../components/layout/Header';
+// Import all necessary components
+// ... (UploadForm, FileTable, ListsTable, Modals will be created in separate files)
 
 const MainLayout = () => {
-    // This will be expanded with the full dashboard UI later
+    // This will be the main state management for the user dashboard
+    const [files, setFiles] = useState([]);
+    const [lists, setLists] = useState([]);
+    // ... other states
+
+    const fetchData = useCallback(async () => {
+        // Fetch user's files and lists
+    }, []);
+
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
+
     return (
         <div>
             <Header />
             <main className="container mx-auto p-4">
-                <h1 className="text-2xl font-bold">My Dashboard</h1>
-                <p>Your file and list management components will go here.</p>
+                {/* The rest of your dashboard UI will go here */}
+                <h1>Welcome to your Dashboard</h1>
             </main>
         </div>
     );
