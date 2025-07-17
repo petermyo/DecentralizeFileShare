@@ -8,10 +8,18 @@
  * including the main API, admin API, and public link redirects.
  *
  */
+import { Hono } from 'hono'
 
-import { Hono } from 'hono';
-import { serveStatic } from 'hono/cloudflare-pages';
-import * as jose from 'jose';
+const app = new Hono()
+
+app.get('/', (c) => {
+  return c.text('Hello Hono!')
+})
+
+
+// import { Hono } from 'hono';
+// import { serveStatic } from 'hono/cloudflare-pages';
+// import * as jose from 'jose';
 
 // --- Constants & Config ---
 const FOLDER_NAME = "Decentralized File Share";
