@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "include": [
+    "/*"
+  ],
+  "exclude": [
+    "/assets/*"
+  ],
+  "routes": [
+    {
+      "routePath": "/*",
+      "mountPath": "/",
+      "method": "",
+      "module": [
+        "[[path]].js:onRequest"
+      ]
+    }
+  ]
+}
