@@ -1,7 +1,9 @@
+
 // --- /src/App.jsx ---
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { DataProvider } from './contexts/DataContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import MainLayout from './pages/MainLayout';
 import AdminLayout from './pages/admin/AdminLayout';
@@ -29,21 +31,23 @@ function App() {
   return (
     <AuthProvider>
       <ThemeProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<LoginWrapper />} />
-            <Route path="/dashboard" element={<PrivateRoute><MainLayout /></PrivateRoute>} />
-            <Route path="/settings" element={<PrivateRoute><UserSettings /></PrivateRoute>} />
-            
-            <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
-              <Route index element={<AdminDashboard />} />
-              <Route path="users" element={<AdminUsers />} />
-              <Route path="users/:userId" element={<AdminUserDetail />} />
-              <Route path="files" element={<AdminFiles />} />
-              <Route path="lists" element={<AdminLists />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
+        <DataProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<LoginWrapper />} />
+              <Route path="/dashboard" element={<PrivateRoute><MainLayout /></PrivateRoute>} />
+              <Route path="/settings" element={<PrivateRoute><UserSettings /></PrivateRoute>} />
+              
+              <Route path="/admin" element={<AdminRoute><AdminLayout /></AdminRoute>}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="users" element={<AdminUsers />} />
+                <Route path="users/:userId" element={<AdminUserDetail />} />
+                <Route path="files" element={<AdminFiles />} />
+                <Route path="lists" element={<AdminLists />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </DataProvider>
       </ThemeProvider>
     </AuthProvider>
   );
