@@ -1,11 +1,12 @@
 /**
  * =================================================================================
- * Cloudflare Pages Function: Top-Level Middleware
+ * Cloudflare Pages Function: Unified Top-Level Middleware
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This version adds full CRUD functionality for file lists and fixes the
- * public list view rendering.
+ * This single, unified file handles all backend routing for the entire application,
+ * including the main API, admin API, and public link redirects. This simplifies
+ * the project structure and resolves routing issues.
  *
  */
 // --- Import JWT Library ---
@@ -17,6 +18,8 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
+const ADMIN_USER_IDS = ['118136495390756743317', '108180268584101876155'];
+
 
 /**
  * Main request handler. This function is the entry point for all requests.
@@ -26,38 +29,28 @@ export const onRequest = async (context) => {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Route API requests
+    // --- Main Router ---
+    if (path.startsWith('/api/admin/')) {
+        return handleAdminApiRequest(request, env);
+    }
     if (path.startsWith('/api/')) {
         return handleApiRequest(request, env);
     }
-
-    // Route short URL redirects for individual files
     if (path.startsWith('/s/')) {
-        if (request.method === 'GET') {
-            return handleShortUrlGet(request, env);
-        }
-        if (request.method === 'POST') {
-            return handleShortUrlPost(request, env);
-        }
+        if (request.method === 'GET') return handleShortUrlGet(request, env);
+        if (request.method === 'POST') return handleShortUrlPost(request, env);
+    }
+    if (path.startsWith('/l/')) {
+        if (request.method === 'GET') return handlePublicListGet(request, env);
+        if (request.method === 'POST') return handlePublicListPost(request, env);
     }
     
-    // Route public list views
-    if (path.startsWith('/l/')) {
-        if (request.method === 'GET') {
-            return handlePublicListGet(request, env);
-        }
-        if (request.method === 'POST') {
-            return handlePublicListPost(request, env);
-        }
-    }
-
-
-    // For all other requests, pass through to the static asset handler (serves the frontend)
+    // For all other requests (e.g., /, /admin), let Pages serve the static HTML file.
     return next();
 }
 
 /**
- * Handles all requests prefixed with /api/
+ * Handles all non-admin requests prefixed with /api/
  */
 async function handleApiRequest(request, env) {
     const url = new URL(request.url);
@@ -96,6 +89,45 @@ async function handleApiRequest(request, env) {
     return new Response('API route not found or method not allowed', { status: 404 });
 }
 
+/**
+ * Handles all requests prefixed with /api/admin/
+ */
+async function handleAdminApiRequest(request, env) {
+    // First, run the authorization middleware
+    const authResponse = await isAdmin(request, env);
+    if (authResponse.status !== 200) {
+        return authResponse;
+    }
+
+    const url = new URL(request.url);
+    const path = url.pathname;
+    
+    // Admin API router logic
+    switch (path) {
+        case '/api/admin/stats':
+            return getStats(env);
+        case '/api/admin/users':
+            return getUsers(env);
+        case '/api/admin/revoke':
+            return revokeUserAccess(request, env);
+        case '/api/admin/files':
+            return getAllFiles(env);
+        case '/api/admin/lists':
+            return getAllLists(env);
+        case '/api/admin/delete-file':
+            return deleteFileAsAdmin(request, env);
+        case '/api/admin/delete-list':
+            return deleteListAsAdmin(request, env);
+        case '/api/admin/user-files':
+            return getUserFiles(request, env);
+        case '/api/admin/user-lists':
+            return getUserLists(request, env);
+    }
+    
+    return new Response('Admin API route not found', { status: 404 });
+}
+
+
 // --- JWT & Cookie Helpers ---
 const getJwtSecret = (env) => new TextEncoder().encode(env.JWT_SECRET);
 
@@ -116,7 +148,7 @@ function createCookieHeader(name, value, options = {}) {
     return cookie;
 }
 
-// --- Auth Helper ---
+// --- Auth Helpers ---
 async function getAuthenticatedUserId(request, env) {
     const token = getCookie(request, 'auth_token');
     if (!token) {
@@ -135,6 +167,30 @@ async function getAuthenticatedUserId(request, env) {
         throw new Response(responseBody, { status: 401, headers });
     }
 }
+
+async function isAdmin(request, env) {
+    const token = getCookie(request, 'auth_token');
+    if (!token) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
+
+    try {
+        const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
+        if (!payload || !payload.userId) {
+            throw new Error('Invalid token payload.');
+        }
+
+        if (!ADMIN_USER_IDS.includes(payload.userId)) {
+            return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Invalid or expired token.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
+}
+
 
 // --- Route Handlers ---
 function handleLogin(request, env) {
@@ -174,10 +230,13 @@ async function handleCallback(request, env) {
         });
         const profile = await profileResponse.json();
         const userId = profile.id;
-        const userName = profile.name;
+        const userName = profile.name || profile.email;
         const picture = profile.picture;
 
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
+            name: userName,
+            email: profile.email,
+            picture: picture,
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
             expires_in: tokens.expires_in,
@@ -232,7 +291,7 @@ async function handleUploadInitiate(request, env) {
             const now = new Date();
             const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
             const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const newFileName = `${date}_${time}_${file.fileName}`;
+            const newFileName = `${time}_${date}_${file.fileName}`;
 
             const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
 
@@ -292,7 +351,7 @@ async function handleUploadFinalize(request, env) {
             fileId, fileName, originalName, fileSize,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
-            passcode: passcode || null, // FIX: Ensure passcode string is stored for editing
+            passcode: passcode || null,
             expireDate: expireDate || null
         };
         const historyKey = `history:upload:${userId}`;
@@ -493,7 +552,7 @@ async function handleListCreate(request, env) {
             shortUrl: listShortUrl,
             fileCount: listFiles.length,
             createdAt: new Date().toISOString(),
-            passcode: passcode || null, // FIX: Store the actual passcode, not a boolean
+            passcode: passcode || null,
             expireDate: expireDate || null
         });
         await env.APP_KV.put(listHistoryKey, JSON.stringify(existingListHistory));
@@ -597,7 +656,6 @@ async function handleListUpdate(request, env) {
         const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = listHistory.map(list => {
             if (list.shortUrl === shortUrl) {
-                // FIX: Store the actual passcode, not just a boolean
                 return { ...list, passcode: passcode || null, expireDate: expireDate || null };
             }
             return list;
@@ -608,6 +666,132 @@ async function handleListUpdate(request, env) {
     } catch (err) {
         if (err instanceof Response) return err;
         return new Response(JSON.stringify({ error: 'Failed to update list.' }), { status: 500 });
+    }
+}
+
+
+// --- Admin API Handlers ---
+async function getStats(env) {
+    const userKeys = await env.APP_KV.list({ prefix: "user:" });
+    const fileKeys = await env.APP_KV.list({ prefix: "shorturl:" });
+    const listKeys = await env.APP_KV.list({ prefix: "list:" });
+
+    return new Response(JSON.stringify({
+        totalUsers: userKeys.keys.length,
+        totalFiles: fileKeys.keys.length,
+        totalLists: listKeys.keys.length,
+    }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function getUsers(env) {
+    const { keys } = await env.APP_KV.list({ prefix: "history:login:" });
+    const userHistoryData = await Promise.all(
+        keys.map(async (key) => {
+            const userId = key.name.split(':')[2];
+            const history = await env.APP_KV.get(key.name, { type: 'json' });
+            const lastLogin = history[history.length - 1];
+            
+            const fileHistoryKey = `history:upload:${userId}`;
+            const fileHistory = await env.APP_KV.get(fileHistoryKey, { type: 'json' }) || [];
+            
+            const userData = await env.APP_KV.get(`user:${userId}`, {type: 'json'}) || {};
+
+            return {
+                userId,
+                name: userData.name,
+                picture: userData.picture,
+                lastLogin: lastLogin.timestamp,
+                lastLoginIp: lastLogin.ip,
+                fileCount: fileHistory.length
+            };
+        })
+    );
+    return new Response(JSON.stringify(userHistoryData), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function revokeUserAccess(request, env) {
+    try {
+        const { userId } = await request.json();
+        if (!userId) {
+            return new Response(JSON.stringify({ error: 'User ID is required.' }), { status: 400 });
+        }
+
+        await env.APP_KV.delete(`user:${userId}`);
+        await env.APP_KV.delete(`history:login:${userId}`);
+        await env.APP_KV.delete(`history:upload:${userId}`);
+        await env.APP_KV.delete(`history:list:${userId}`);
+        
+        return new Response(JSON.stringify({ success: true, message: `Access and all records revoked for user ${userId}` }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Failed to revoke access.' }), { status: 500 });
+    }
+}
+
+async function getAllFiles(env) {
+    const { keys } = await env.APP_KV.list({ prefix: "shorturl:" });
+    const files = await Promise.all(keys.map(key => env.APP_KV.get(key.name, { type: 'json' })));
+    return new Response(JSON.stringify(files), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function getAllLists(env) {
+    const { keys } = await env.APP_KV.list({ prefix: "list:" });
+    const lists = await Promise.all(keys.map(async (key) => {
+        const listData = await env.APP_KV.get(key.name, { type: 'json' });
+        return {
+            shortCode: key.name.split(':')[1],
+            ...listData
+        };
+    }));
+    return new Response(JSON.stringify(lists), { headers: { 'Content-Type': 'application/json' } });
+}
+
+async function deleteFileAsAdmin(request, env) {
+     try {
+        const { fileId, shortCode, ownerId } = await request.json();
+        if (!fileId || !shortCode || !ownerId) {
+            return new Response(JSON.stringify({ error: "Missing required data" }), { status: 400 });
+        }
+
+        const tokenData = await env.APP_KV.get(`user:${ownerId}`, { type: 'json' });
+        if (tokenData) {
+            const accessToken = await getValidAccessToken(tokenData, ownerId, env);
+            await fetch(`${GOOGLE_DRIVE_API}/files/${fileId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+        }
+
+        await env.APP_KV.delete(`shorturl:${shortCode}`);
+        
+        const historyKey = `history:upload:${ownerId}`;
+        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const updatedHistory = fileHistory.filter(file => file.fileId !== fileId);
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Failed to delete file.' }), { status: 500 });
+    }
+}
+
+async function deleteListAsAdmin(request, env) {
+    try {
+        const { shortCode, ownerId } = await request.json();
+        if (!shortCode || !ownerId) {
+            return new Response(JSON.stringify({ error: "Missing required data" }), { status: 400 });
+        }
+        
+        await env.APP_KV.delete(`list:${shortCode}`);
+
+        const historyKey = `history:list:${ownerId}`;
+        const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
+        const shortUrl = `${new URL(request.url).origin}/l/${shortCode}`;
+        const updatedHistory = listHistory.filter(list => list.shortUrl !== shortUrl);
+        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
+
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Failed to delete list.' }), { status: 500 });
     }
 }
 
