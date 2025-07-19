@@ -2,23 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --color-primary: #0ea5e9; /* sky-500 */
-  --color-secondary: #0284c7; /* sky-600 */
-  --color-accent: #f0f9ff; /* sky-50 */
-}
-.theme-pink {
-  --color-primary: #ec4899;
-  --color-secondary: #db2777;
-  --color-accent: #fce7f3;
-}
-.theme-green {
-  --color-primary: #22c55e;
-  --color-secondary: #16a34a;
-  --color-accent: #f0fdf4;
-}
-.theme-glamorous {
-  --color-primary: #d946ef;
-  --color-secondary: #c026d3;
-  --color-accent: #fae8ff;
-}
+body {
+  font-family: 'Inter', sans-serif;
+} 
