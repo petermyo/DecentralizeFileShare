@@ -344,7 +344,8 @@ async function handleUploadFinalize(request, env) {
             name: fileName,
             ownerId: userId,
             passcode: passcode || null,
-            expireDate: expireDate || null
+            expireDate: expireDate || null,
+            fileType // <-- store fileType
         }), { expirationTtl: 60 * 60 * 24 * 30 });
 
         const fileMeta = {
@@ -352,7 +353,8 @@ async function handleUploadFinalize(request, env) {
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
             passcode: passcode || null,
-            expireDate: expireDate || null
+            expireDate: expireDate || null,
+            fileType // <-- store fileType
         };
         const historyKey = `history:upload:${userId}`;
         const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
@@ -384,7 +386,15 @@ async function handleShortUrlGet(request, env) {
         return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
     }
 
-    return streamFile(fileData, env);
+    // Handle preview and download query params
+    if (url.searchParams.get('preview') === '1') {
+        return streamFile(fileData, env, true);
+    }
+    if (url.searchParams.get('download') === '1') {
+        return streamFile(fileData, env, false);
+    }
+    // Default: show preview page
+    return new Response(getFilePreviewPage(shortCode, fileData), { headers: { 'Content-Type': 'text/html' } });
 }
 
 async function handleShortUrlPost(request, env) {
@@ -841,13 +851,13 @@ async function findOrCreateFolder(accessToken, env) {
     return newFolder.id;
 }
 
-async function streamFile(fileData, env) {
+// Update streamFile to support inline or attachment
+async function streamFile(fileData, env, inline = false) {
     try {
         const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
         if (!ownerTokenData) throw new Error("File owner's token not found.");
 
         const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
-        
         const driveResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?alt=media`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
@@ -857,9 +867,15 @@ async function streamFile(fileData, env) {
         }
 
         const headers = new Headers();
-        headers.set('Content-Type', 'application/octet-stream');
-        headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
-        headers.set('Content-Length', driveResponse.headers.get('Content-Length'));
+        const type = fileData.fileType || 'application/octet-stream';
+        headers.set('Content-Type', type);
+        if (inline) {
+            headers.set('Content-Disposition', `inline; filename=\"${fileData.name}\"`);
+        } else {
+            headers.set('Content-Disposition', `attachment; filename=\"${fileData.name}\"`);
+        }
+        const contentLength = driveResponse.headers.get('Content-Length');
+        if (contentLength) headers.set('Content-Length', contentLength);
 
         return new Response(driveResponse.body, { headers });
     } catch (err) {
@@ -910,17 +926,35 @@ function getPublicListPage(files) {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
     }
      
-     const fileRows = files.map(file => `
+     const fileRows = files.map(file => {
+        let preview = '';
+        const type = file.fileType || '';
+        if (type.startsWith('image/')) {
+            preview = `<a href="${file.shortUrl}?preview=1" target="_blank"><img src="${file.shortUrl}?preview=1" alt="Preview" class="h-16 w-16 object-cover rounded shadow" /></a>`;
+        } else if (type.startsWith('video/')) {
+            preview = `<a href="${file.shortUrl}?preview=1" target="_blank"><span class="inline-block h-16 w-16 bg-gray-200 flex items-center justify-center rounded shadow"><svg xmlns='http://www.w3.org/2000/svg' class='h-8 w-8 text-gray-500' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M14.752 11.168l-6.518-3.759A1 1 0 007 8.06v7.879a1 1 0 001.234.97l6.518-1.879A1 1 0 0016 14.06V9.94a1 1 0 00-1.248-.772z' /></svg></span></a>`;
+        } else if (type === 'application/pdf') {
+            preview = `<a href="${file.shortUrl}?preview=1" target="_blank"><span class="inline-block h-16 w-16 bg-red-100 flex items-center justify-center rounded shadow"><svg xmlns='http://www.w3.org/2000/svg' class='h-8 w-8 text-red-500' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 4v16m8-8H4' /></svg></span></a>`;
+        } else {
+            preview = `<span class="inline-block h-16 w-16 bg-gray-100 flex items-center justify-center rounded shadow"><svg xmlns='http://www.w3.org/2000/svg' class='h-8 w-8 text-gray-400' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M4 12V8a2 2 0 012-2h12a2 2 0 012 2v4M4 12v4m16-4v4' /></svg></span>`;
+        }
+        return `
         <tr class="border-b border-slate-200">
             <td class="p-4 text-slate-800">
-                <div class="font-medium">${file.fileName}</div>
-                <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
+                <div class="flex items-center gap-4">
+                    ${preview}
+                    <div>
+                        <div class="font-medium">${file.fileName}</div>
+                        <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
+                    </div>
+                </div>
             </td>
             <td class="p-4 text-center">
                 <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Download</a>
             </td>
         </tr>
-    `).join('');
+    `;
+    }).join('');
 
     return `
         <!DOCTYPE html>
@@ -956,5 +990,41 @@ function getPublicListPage(files) {
             </div>
         </body>
         </html>
+    `;
+}
+
+// Helper: Generate preview HTML for a file
+function getFilePreviewPage(shortCode, fileData) {
+    const downloadUrl = `/s/${shortCode}?download=1`;
+    let previewHtml = '';
+    const type = fileData.fileType || '';
+    if (type.startsWith('image/')) {
+        previewHtml = `<img src="/s/${shortCode}?preview=1" alt="Preview" class="max-w-full max-h-96 mx-auto" />`;
+    } else if (type.startsWith('video/')) {
+        previewHtml = `<video controls class="max-w-full max-h-96 mx-auto"><source src="/s/${shortCode}?preview=1" type="${type}">Your browser does not support the video tag.</video>`;
+    } else if (type === 'application/pdf') {
+        previewHtml = `<iframe src="/s/${shortCode}?preview=1" class="w-full h-96 border rounded"></iframe>`;
+    } else {
+        previewHtml = `<div class="text-gray-500 text-center">No preview available for this file type.</div>`;
+    }
+    return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>File Preview - ${fileData.name}</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-gray-100 flex items-center justify-center min-h-screen">
+        <div class="w-full max-w-2xl p-8 space-y-6 bg-white rounded-lg shadow-md">
+            <h2 class="text-2xl font-bold text-center text-gray-800 mb-2">${fileData.name}</h2>
+            <div class="flex justify-center items-center mb-4">${previewHtml}</div>
+            <div class="flex justify-center">
+                <a href="${downloadUrl}" class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold">Download</a>
+            </div>
+        </div>
+    </body>
+    </html>
     `;
 }
