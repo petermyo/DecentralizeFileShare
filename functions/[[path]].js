@@ -13,7 +13,7 @@ import { Hono } from 'hono';
 import { serveStatic } from 'hono/cloudflare-pages';
 import * as jose from 'jose';
 
-// --- Constants & Config ---
+// --- Constants ---
 const FOLDER_NAME = "Decentralized File Share";
 const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -21,13 +21,11 @@ const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
 const ADMIN_USER_IDS = ['118136495390756743317', '108180268584101876155'];
 
-const app = new Hono();
-
 // --- JWT & Cookie Helpers ---
-const getJwtSecret = (c) => new TextEncoder().encode(c.env.JWT_SECRET);
+const getJwtSecret = (env) => new TextEncoder().encode(env.JWT_SECRET);
 
-const getCookie = (c, name) => {
-    const cookieHeader = c.req.header('Cookie');
+function getCookie(request, name) {
+    const cookieHeader = request.headers.get('Cookie');
     if (!cookieHeader) return null;
     const cookies = cookieHeader.split(';');
     for (const cookie of cookies) {
@@ -35,139 +33,115 @@ const getCookie = (c, name) => {
         if (parts[0] === name) return parts[1];
     }
     return null;
-};
+}
 
-const createCookieHeader = (name, value, options = {}) => {
+function createCookieHeader(name, value, options = {}) {
     let cookie = `${name}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax`;
     if (options.maxAge) cookie += `; Max-Age=${options.maxAge}`;
     return cookie;
 }
 
-// --- Middleware ---
-const authMiddleware = async (c, next) => {
-    const token = getCookie(c, 'auth_token');
-    if (!token) return c.json({ error: 'Unauthorized' }, 401);
-    try {
-        const { payload } = await jose.jwtVerify(token, await getJwtSecret(c));
-        if (!payload || !payload.userId) throw new Error('Invalid token payload.');
-        c.set('user', payload);
-        await next();
-    } catch (err) {
-        return c.json({ error: 'Invalid or expired token' }, 401);
+// --- Auth Helpers ---
+async function getAuthenticatedUserId(request, env) {
+    const token = getCookie(request, 'auth_token');
+    if (!token) {
+        throw new Response(JSON.stringify({ error: 'Unauthorized. Please log in.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
-};
+    try {
+        const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
+        if (!payload || !payload.userId) {
+            throw new Error('Invalid token payload.');
+        }
+        return payload.userId;
+    } catch (err) {
+        const headers = new Headers({ 'Content-Type': 'application/json' });
+        headers.set('Set-Cookie', createCookieHeader('auth_token', '', { maxAge: -1 }));
+        const responseBody = JSON.stringify({ error: 'Invalid or expired token. Please log in again.' });
+        throw new Response(responseBody, { status: 401, headers });
+    }
+}
 
-const adminMiddleware = async (c, next) => {
-    const user = c.get('user');
-    if (!ADMIN_USER_IDS.includes(user.userId)) {
-        return c.json({ error: 'Forbidden' }, 403);
+async function isAdmin(request, env) {
+    const token = getCookie(request, 'auth_token');
+    if (!token) {
+        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
+    try {
+        const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
+        if (!payload || !payload.userId) {
+            throw new Error('Invalid token payload.');
+        }
+        if (!ADMIN_USER_IDS.includes(payload.userId)) {
+            return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } catch (err) {
+        return new Response(JSON.stringify({ error: 'Invalid or expired token.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+    }
+}
+
+// --- Handler Functions (all your existing handler functions go here, unchanged) ---
+// ... (Paste all your handler functions from your middleware here) ...
+// For brevity, not repeating them in this snippet, but you should paste them all in this section.
+
+// --- Hono App Setup ---
+const app = new Hono();
+
+// --- Admin API Router ---
+const adminApi = new Hono();
+adminApi.use('*', async (c, next) => {
+    const authResponse = await isAdmin(c.req.raw, c.env);
+    if (authResponse.status !== 200) {
+        return authResponse;
     }
     await next();
-};
+});
+adminApi.get('/stats', c => getStats(c.env));
+adminApi.get('/users', c => getUsers(c.env));
+adminApi.post('/revoke', c => revokeUserAccess(c.req.raw, c.env));
+adminApi.get('/files', c => getAllFiles(c.env));
+adminApi.get('/lists', c => getAllLists(c.env));
+adminApi.post('/delete-file', c => deleteFileAsAdmin(c.req.raw, c.env));
+adminApi.post('/delete-list', c => deleteListAsAdmin(c.req.raw, c.env));
+// Add more admin routes as needed
 
-
-// --- API Routes ---
+// --- User API Router ---
 const api = new Hono();
-const adminApi = new Hono();
+api.get('/auth/google/login', c => handleLogin(c.req.raw, c.env));
+api.get('/auth/google/callback', c => handleCallback(c.req.raw, c.env));
+api.post('/upload/initiate', c => handleUploadInitiate(c.req.raw, c.env));
+api.post('/upload/finalize', c => handleUploadFinalize(c.req.raw, c.env));
+api.get('/me', c => handleMe(c.req.raw, c.env));
+api.post('/logout', c => handleLogout(c.req.raw));
+api.get('/files', c => getFileHistory(c.req.raw, c.env));
+api.post('/delete', c => handleDelete(c.req.raw, c.env));
+api.post('/file/update', c => handleFileUpdate(c.req.raw, c.env));
+api.post('/lists/create', c => handleListCreate(c.req.raw, c.env));
+api.get('/lists', c => getLists(c.req.raw, c.env));
+api.post('/lists/update', c => handleListUpdate(c.req.raw, c.env));
+api.post('/lists/delete', c => handleListDelete(c.req.raw, c.env));
+// Add more user routes as needed
 
-// Public Auth Routes
-api.get('/auth/google/login', (c) => {
-    const url = new URL(c.req.url);
-    const authUrl = new URL(GOOGLE_AUTH_URL);
-    authUrl.searchParams.set('client_id', c.env.GOOGLE_CLIENT_ID);
-    authUrl.searchParams.set('redirect_uri', `${url.origin}/api/auth/google/callback`);
-    authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email');
-    authUrl.searchParams.set('access_type', 'offline');
-    authUrl.searchParams.set('prompt', 'consent');
-    return c.redirect(authUrl.toString());
+// --- Public Short/Link Routes ---
+app.get('/s/:shortcode', async c => {
+    if (c.req.method === 'GET') return handleShortUrlGet(c.req.raw, c.env);
+    if (c.req.method === 'POST') return handleShortUrlPost(c.req.raw, c.env);
+});
+app.get('/l/:shortcode', async c => {
+    if (c.req.method === 'GET') return handlePublicListGet(c.req.raw, c.env);
+    if (c.req.method === 'POST') return handlePublicListPost(c.req.raw, c.env);
 });
 
-api.get('/auth/google/callback', async (c) => {
-    const url = new URL(c.req.url);
-    const code = c.req.query('code');
-    if (!code) return c.json({ error: 'Authorization code not found.' }, 400);
-
-    try {
-        const tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                code,
-                client_id: c.env.GOOGLE_CLIENT_ID,
-                client_secret: c.env.GOOGLE_CLIENT_SECRET,
-                redirect_uri: `${url.origin}/api/auth/google/callback`,
-                grant_type: 'authorization_code',
-            }),
-        });
-        const tokens = await tokenResponse.json();
-        if (tokens.error) throw new Error(`Google token error: ${tokens.error_description || 'Bad Request'}`);
-
-        const profileResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-            headers: { 'Authorization': `Bearer ${tokens.access_token}` }
-        });
-        const profile = await profileResponse.json();
-        const { id: userId, name, email, picture } = profile;
-
-        await c.env.APP_KV.put(`user:${userId}`, JSON.stringify({
-            name, email, picture,
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            expires_in: tokens.expires_in,
-            iat: Math.floor(Date.now() / 1000)
-        }));
-
-        const token = await new jose.SignJWT({ userId, name, picture, email })
-            .setProtectedHeader({ alg: 'HS256' })
-            .setIssuedAt()
-            .setExpirationTime('24h')
-            .sign(await getJwtSecret(c));
-
-        const headers = new Headers();
-        headers.set('Location', '/dashboard');
-        headers.set('Set-Cookie', createCookieHeader('auth_token', token));
-        return new Response(null, { status: 302, headers });
-
-    } catch (err) {
-        console.error('Callback error:', err.message);
-        return c.json({ error: 'An error occurred during authentication.' }, 500);
-    }
-});
-
-// Authenticated User Routes
-api.use('/me', authMiddleware);
-api.get('/me', (c) => c.json({ loggedIn: true, ...c.get('user') }));
-
-api.use('/files', authMiddleware);
-api.get('/files', async (c) => {
-    const user = c.get('user');
-    const history = await c.env.APP_KV.get(`history:upload:${user.userId}`, { type: 'json' }) || [];
-    return c.json(history.reverse());
-});
-
-// ... (All other user-specific API routes like upload, delete, update, lists, etc. go here)
-
-// --- Admin API Routes ---
-adminApi.use('*', authMiddleware, adminMiddleware);
-
-adminApi.get('/check', (c) => c.json({ isAdmin: true }));
-adminApi.get('/stats', async (c) => { /* ... */ });
-adminApi.get('/users', async (c) => { /* ... */ });
-// ... (All other admin routes here)
-
-
-// --- Main Hono App ---
-app.route('/api', api);
+// --- Mount API Routers ---
 app.route('/api/admin', adminApi);
+app.route('/api', api);
 
-// Serve static assets
+// --- Static Asset Serving and SPA Fallback ---
 app.get('/assets/*', serveStatic({ root: './public' }));
 app.get('/manifest.json', serveStatic({ root: './public' }));
 app.get('/sw.js', serveStatic({ root: './public' }));
 app.get('/favicon.ico', serveStatic({ root: './public' }));
 app.get('/robots.txt', serveStatic({ root: './public' }));
-
-// Fallback for SPA: serve index.html for all other GET requests
 app.get('*', serveStatic({ path: './public/index.html' }));
 
 export const onRequest = app.fetch;
