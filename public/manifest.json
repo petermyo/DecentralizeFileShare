@@ -1,0 +1,21 @@
+{
+    "short_name": "ဒီဖိုင်",
+    "name": "ဒီဖိုင် - Advance File Sharing",
+    "icons": [
+      {
+        "src": "https://placehold.co/192x192/3B82F6/FFFFFF?text=D",
+        "type": "image/png",
+        "sizes": "192x192"
+      },
+      {
+        "src": "https://placehold.co/512x512/3B82F6/FFFFFF?text=D",
+        "type": "image/png",
+        "sizes": "512x512"
+      }
+    ],
+    "start_url": ".",
+    "display": "standalone",
+    "theme_color": "#ffffff",
+    "background_color": "#f3f4f6"
+  }
+  
