@@ -167,7 +167,7 @@ app.get('/l/:shortcode', async (c) => { /* ... */ });
 // Serve static assets from the root, letting the React app handle routing
 // app.get('*', serveStatic({ root: './public' }));
 // app.get('*', serveStatic({ path: './public/index.html' }));
-app.get('*', serveStatic({ root: './public', fallback: 'index.html' }));
-
+//app.get('*', serveStatic({ root: './public', fallback: 'index.html' }));
+app.get('*', serveStatic({ root: './public' }));
 //export const onRequest = app;
 export const onRequest = app.fetch;
