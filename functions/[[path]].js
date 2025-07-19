@@ -160,11 +160,14 @@ adminApi.get('/users', async (c) => { /* ... */ });
 app.route('/api', api);
 app.route('/api/admin', adminApi);
 
-// Public download and list routes
-app.get('/s/:shortcode', async (c) => { /* ... */ });
-app.get('/l/:shortcode', async (c) => { /* ... */ });
+// Serve static assets
+app.get('/assets/*', serveStatic({ root: './public' }));
+app.get('/manifest.json', serveStatic({ root: './public' }));
+app.get('/sw.js', serveStatic({ root: './public' }));
+app.get('/favicon.ico', serveStatic({ root: './public' }));
+app.get('/robots.txt', serveStatic({ root: './public' }));
 
-// Serve static assets from the root, letting the React app handle routing
-app.get('*', serveStatic({ root: './public', fallback: 'index.html' }));
+// Fallback for SPA: serve index.html for all other GET requests
+app.get('*', serveStatic({ path: './public/index.html' }));
 
 export const onRequest = app.fetch;
