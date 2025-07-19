@@ -148,7 +148,6 @@ api.get('/files', async (c) => {
 // ... (All other user-specific API routes like upload, delete, update, lists, etc. go here)
 
 // --- Admin API Routes ---
-const adminApi = new Hono();
 adminApi.use('*', authMiddleware, adminMiddleware);
 
 adminApi.get('/check', (c) => c.json({ isAdmin: true }));
