@@ -168,4 +168,5 @@ app.get('/l/:shortcode', async (c) => { /* ... */ });
 app.get('*', serveStatic({ root: './public' }));
 app.get('*', serveStatic({ path: './public/index.html' }));
 
-export const onRequest = app;
+//export const onRequest = app;
+export const onRequest = app.fetch;
