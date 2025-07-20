@@ -333,7 +333,7 @@ async function handleShortUrlGet(request, env) {
     }
 
     // Default: show preview page
-    return getFilePreview(fileData, env);
+    return getFilePreview(fileData, env, shortCode);
 }
 
 async function handleShortUrlPost(request, env) {
@@ -695,7 +695,7 @@ async function streamFile(fileData, env) {
     }
 }
 
-async function getFilePreview(fileData, env) {
+async function getFilePreview(fileData, env, shortCode) {
     try {
         const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
         if (!ownerTokenData) throw new Error("File owner's token not found.");
@@ -717,18 +717,18 @@ async function getFilePreview(fileData, env) {
 
         // Determine file type and return appropriate preview
         if (mimeType.startsWith('image/')) {
-            return getImagePreview(fileData, env, accessToken);
+            return getImagePreview(fileData, env, accessToken, shortCode);
         } else if (mimeType.startsWith('video/')) {
-            return getVideoPreview(fileData, env, accessToken);
+            return getVideoPreview(fileData, env, accessToken, shortCode);
         } else if (mimeType.startsWith('audio/')) {
-            return getAudioPreview(fileData, env, accessToken);
+            return getAudioPreview(fileData, env, accessToken, shortCode);
         } else if (mimeType === 'text/plain' || mimeType.startsWith('text/')) {
-            return getTextPreview(fileData, env, accessToken);
+            return getTextPreview(fileData, env, accessToken, shortCode);
         } else if (mimeType === 'application/pdf') {
-            return getPdfPreview(fileData, env, accessToken);
+            return getPdfPreview(fileData, env, accessToken, shortCode);
         } else {
             // For other file types, show a generic preview with download option
-            return getGenericPreview(fileData, mimeType, fileSize);
+            return getGenericPreview(fileData, mimeType, fileSize, shortCode);
         }
     } catch (err) {
         console.error("Preview error:", err.message);
@@ -736,8 +736,7 @@ async function getFilePreview(fileData, env) {
     }
 }
 
-async function getImagePreview(fileData, env, accessToken) {
-    const shortCode = fileData.shortCode || fileData.shortUrl?.split('/s/')[1] || 'unknown';
+async function getImagePreview(fileData, env, accessToken, shortCode) {
     const imageUrl = `/s/${shortCode}`;
     const downloadUrl = `/s/${shortCode}`;
 
@@ -746,8 +745,7 @@ async function getImagePreview(fileData, env, accessToken) {
     });
 }
 
-async function getVideoPreview(fileData, env, accessToken) {
-    const shortCode = fileData.shortCode || fileData.shortUrl?.split('/s/')[1] || 'unknown';
+async function getVideoPreview(fileData, env, accessToken, shortCode) {
     const videoUrl = `/s/${shortCode}`;
     const downloadUrl = `/s/${shortCode}`;
 
@@ -756,8 +754,7 @@ async function getVideoPreview(fileData, env, accessToken) {
     });
 }
 
-async function getAudioPreview(fileData, env, accessToken) {
-    const shortCode = fileData.shortCode || fileData.shortUrl?.split('/s/')[1] || 'unknown';
+async function getAudioPreview(fileData, env, accessToken, shortCode) {
     const audioUrl = `/s/${shortCode}`;
     const downloadUrl = `/s/${shortCode}`;
 
@@ -766,7 +763,7 @@ async function getAudioPreview(fileData, env, accessToken) {
     });
 }
 
-async function getTextPreview(fileData, env, accessToken) {
+async function getTextPreview(fileData, env, accessToken, shortCode) {
     const driveResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?alt=media`, {
         headers: { 'Authorization': `Bearer ${accessToken}` }
     });
@@ -778,13 +775,12 @@ async function getTextPreview(fileData, env, accessToken) {
     const text = await driveResponse.text();
     const previewText = text.length > 10000 ? text.substring(0, 10000) + '...' : text;
 
-    return new Response(getTextPreviewPage(fileData.name, previewText, text.length > 10000, fileData.shortCode), {
+    return new Response(getTextPreviewPage(fileData.name, previewText, text.length > 10000, shortCode), {
         headers: { 'Content-Type': 'text/html' }
     });
 }
 
-async function getPdfPreview(fileData, env, accessToken) {
-    const shortCode = fileData.shortCode || fileData.shortUrl?.split('/s/')[1] || 'unknown';
+async function getPdfPreview(fileData, env, accessToken, shortCode) {
     const pdfUrl = `/s/${shortCode}`;
     const downloadUrl = `/s/${shortCode}`;
 
@@ -793,7 +789,7 @@ async function getPdfPreview(fileData, env, accessToken) {
     });
 }
 
-function getGenericPreview(fileData, mimeType, fileSize) {
+function getGenericPreview(fileData, mimeType, fileSize, shortCode) {
     const formatBytes = (bytes, decimals = 2) => {
         if (!bytes || bytes === 0) return '0 Bytes';
         const k = 1024;
@@ -804,8 +800,6 @@ function getGenericPreview(fileData, mimeType, fileSize) {
     };
 
     const fileIcon = getFileIcon(mimeType);
-    // Extract shortCode from the URL if not available in fileData
-    const shortCode = fileData.shortCode || fileData.shortUrl?.split('/s/')[1] || 'unknown';
     const downloadUrl = `/s/${shortCode}`;
 
     return new Response(`
