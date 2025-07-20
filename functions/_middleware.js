@@ -233,7 +233,7 @@ async function handleUploadInitiate(request, env) {
             const now = new Date();
             const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
             const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const newFileName = `${file.fileName}_${date}_${time}`;
+            const newFileName = `${date}_${time}_${file.fileName}`;
 
             const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
 
