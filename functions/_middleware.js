@@ -233,7 +233,7 @@ async function handleUploadInitiate(request, env) {
             const now = new Date();
             const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
             const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const newFileName = `${date}_${time}_${file.fileName}`;
+            const newFileName = `${file.fileName}`;
 
             const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
 
@@ -325,14 +325,15 @@ async function handleShortUrlGet(request, env) {
     if (fileData.passcode) {
         return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
     }
-    //File preview added
-    // Check if preview is requested
-    const preview = url.searchParams.get('preview');
-    if (preview === 'true') {
-        return getFilePreview(fileData, env);
+
+    // Check if download is requested
+    const download = url.searchParams.get('dl');
+    if (download === '1') {
+        return streamFile(fileData, env);
     }
 
-    return streamFile(fileData, env);
+    // Default: show preview page
+    return getFilePreview(fileData, env);
 }
 
 async function handleShortUrlPost(request, env) {
@@ -347,7 +348,10 @@ async function handleShortUrlPost(request, env) {
     const submittedPasscode = formData.get('passcode');
 
     if (fileData.passcode && submittedPasscode === fileData.passcode) {
-        return streamFile(fileData, env);
+        // Redirect to preview page after successful passcode
+        const headers = new Headers();
+        headers.set('Location', `/s/${shortCode}`);
+        return new Response(null, { status: 302, headers });
     } else {
         return new Response(getPasscodePage(shortCode, fileData.name, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
@@ -830,7 +834,7 @@ function getGenericPreview(fileData, mimeType, fileSize) {
                         </p>
                         
                         <div class="flex space-x-4">
-                            <a href="${downloadUrl}" 
+                            <a href="${downloadUrl}?dl=1" 
                                class="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
                                 <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -870,7 +874,7 @@ function getTextPreviewPage(fileName, content, isTruncated, shortCode) {
                                     <p class="text-gray-600">Text file preview</p>
                                 </div>
                             </div>
-                            <a href="${downloadUrl}" 
+                            <a href="${downloadUrl}?dl=1" 
                                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
                                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -914,7 +918,7 @@ function getImagePreviewPage(fileName, imageUrl, downloadUrl) {
                                     <p class="text-gray-600">Image preview</p>
                                 </div>
                             </div>
-                            <a href="${downloadUrl}" 
+                            <a href="${downloadUrl}?dl=1" 
                                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
                                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -926,7 +930,7 @@ function getImagePreviewPage(fileName, imageUrl, downloadUrl) {
                     
                     <div class="p-6">
                         <div class="flex justify-center">
-                            <img src="${imageUrl}" alt="${fileName}" class="max-w-full max-h-96 object-contain rounded-lg shadow-lg">
+                            <img src="${imageUrl}?dl=1" alt="${fileName}" class="max-w-full max-h-96 object-contain rounded-lg shadow-lg">
                         </div>
                     </div>
                 </div>
@@ -958,7 +962,7 @@ function getVideoPreviewPage(fileName, videoUrl, downloadUrl) {
                                     <p class="text-gray-600">Video preview</p>
                                 </div>
                             </div>
-                            <a href="${downloadUrl}" 
+                            <a href="${downloadUrl}?dl=1" 
                                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
                                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -971,7 +975,7 @@ function getVideoPreviewPage(fileName, videoUrl, downloadUrl) {
                     <div class="p-6">
                         <div class="flex justify-center">
                             <video controls class="max-w-full max-h-96 rounded-lg shadow-lg">
-                                <source src="${videoUrl}" type="video/*">
+                                <source src="${videoUrl}?dl=1" type="video/*">
                                 Your browser does not support the video tag.
                             </video>
                         </div>
@@ -1005,7 +1009,7 @@ function getAudioPreviewPage(fileName, audioUrl, downloadUrl) {
                                     <p class="text-gray-600">Audio preview</p>
                                 </div>
                             </div>
-                            <a href="${downloadUrl}" 
+                            <a href="${downloadUrl}?dl=1" 
                                class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
                                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -1018,9 +1022,53 @@ function getAudioPreviewPage(fileName, audioUrl, downloadUrl) {
                     <div class="p-6">
                         <div class="flex justify-center">
                             <audio controls class="w-full max-w-md">
-                                <source src="${audioUrl}" type="audio/*">
+                                <source src="${audioUrl}?dl=1" type="audio/*">
                                 Your browser does not support the audio tag.
                             </audio>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
+}
+
+function getPdfPreviewPage(fileName, pdfUrl, downloadUrl) {
+    return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>PDF Preview - ${fileName}</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="bg-gray-100 min-h-screen">
+            <div class="container mx-auto max-w-6xl p-6">
+                <div class="bg-white rounded-lg shadow-lg">
+                    <div class="border-b border-gray-200 p-6">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-3">
+                                <div class="text-3xl">📕</div>
+                                <div>
+                                    <h1 class="text-xl font-bold text-gray-800">${fileName}</h1>
+                                    <p class="text-gray-600">PDF preview</p>
+                                </div>
+                            </div>
+                            <a href="${downloadUrl}?dl=1" 
+                               class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
+                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                </svg>
+                                Download
+                            </a>
+                        </div>
+                    </div>
+                    
+                    <div class="p-6">
+                        <div class="flex justify-center">
+                            <iframe src="${pdfUrl}?dl=1" class="w-full h-96 rounded-lg shadow-lg" frameborder="0"></iframe>
                         </div>
                     </div>
                 </div>
@@ -1095,7 +1143,7 @@ function getPublicListPage(files) {
                 <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
             </td>
             <td class="p-4 text-center">
-                <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Download</a>
+                <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Preview</a>
             </td>
         </tr>
     `).join('');
