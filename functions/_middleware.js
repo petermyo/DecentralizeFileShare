@@ -1191,93 +1191,21 @@ function getPublicListPreviewGrid(files, listShortCode) {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
     };
 
-    const getFileIcon = (mimeType) => {
-        if (mimeType.startsWith('image/')) return '🖼️';
-        if (mimeType.startsWith('video/')) return '🎥';
-        if (mimeType.startsWith('audio/')) return '🎵';
-        if (mimeType === 'text/plain') return '📄';
-        if (mimeType.startsWith('text/')) return '📝';
-        if (mimeType === 'application/pdf') return '📕';
-        if (mimeType.includes('word') || mimeType.includes('document')) return '📘';
-        if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return '📗';
-        if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return '📙';
-        if (mimeType.includes('zip') || mimeType.includes('archive')) return '📦';
-        if (mimeType.includes('json')) return '📋';
-        if (mimeType.includes('xml')) return '📄';
-        return '📁';
-    };
-
     const fileCards = files.map((file, index) => {
-        const fileIcon = getFileIcon(file.mimeType || 'application/octet-stream');
         const shortCode = file.shortUrl.split('/s/')[1];
         const downloadUrl = `/s/${shortCode}?dl=1`;
-        const mimeType = file.mimeType || 'application/octet-stream';
-        
-        // Generate preview content based on file type using getFilePreview logic
-        let previewContent = '';
-        if (mimeType.startsWith('image/')) {
-            previewContent = `
-                <div class="mb-4">
-                    <img src="/s/${shortCode}?dl=1" alt="${file.fileName}" 
-                         class="w-full h-48 object-cover rounded-lg shadow-sm">
-                </div>
-            `;
-        } else if (mimeType.startsWith('video/')) {
-            previewContent = `
-                <div class="mb-4">
-                    <video controls class="w-full h-48 object-cover rounded-lg shadow-sm">
-                        <source src="/s/${shortCode}?dl=1" type="${mimeType}">
-                        Your browser does not support the video tag.
-                    </video>
-                </div>
-            `;
-        } else if (mimeType.startsWith('audio/')) {
-            previewContent = `
-                <div class="mb-4">
-                    <audio controls class="w-full">
-                        <source src="/s/${shortCode}?dl=1" type="${mimeType}">
-                        Your browser does not support the audio tag.
-                    </audio>
-                </div>
-            `;
-        } else if (mimeType === 'application/pdf') {
-            previewContent = `
-                <div class="mb-4">
-                    <iframe src="/s/${shortCode}?dl=1" class="w-full h-48 rounded-lg shadow-sm" frameborder="0"></iframe>
-                </div>
-            `;
-        } else if (mimeType === 'text/plain' || mimeType.startsWith('text/')) {
-            previewContent = `
-                <div class="mb-4 flex items-center justify-center h-48 bg-gray-50 rounded-lg">
-                    <div class="text-center">
-                        <div class="text-6xl mb-2">📄</div>
-                        <p class="text-sm text-gray-500">TEXT FILE</p>
-                        <p class="text-xs text-gray-400 mt-1">Click to view content</p>
-                    </div>
-                </div>
-            `;
-        } else {
-            // For other file types, show icon and file info
-            previewContent = `
-                <div class="mb-4 flex items-center justify-center h-48 bg-gray-50 rounded-lg">
-                    <div class="text-center">
-                        <div class="text-6xl mb-2">${fileIcon}</div>
-                        <p class="text-sm text-gray-500">${mimeType.split('/')[1]?.toUpperCase() || 'FILE'}</p>
-                    </div>
-                </div>
-            `;
-        }
-        
         return `
             <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
                 <div class="p-6">
-                    ${previewContent}
-                    
+                    <div class="file-preview" id="preview-${shortCode}" data-shortcode="${shortCode}">
+                        <div class="flex items-center justify-center h-48 bg-gray-50 rounded-lg animate-pulse">
+                            <span class="text-gray-400">Loading preview...</span>
+                        </div>
+                    </div>
                     <div class="mb-4">
                         <h3 class="text-lg font-semibold text-gray-800 truncate mb-1" title="${file.fileName}">${file.fileName}</h3>
                         <p class="text-sm text-gray-500">${formatBytes(file.fileSize)}</p>
                     </div>
-                    
                     <a href="${downloadUrl}" 
                        class="block w-full text-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors">
                         <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1305,15 +1233,29 @@ function getPublicListPreviewGrid(files, listShortCode) {
                     <h1 class="text-3xl font-bold text-gray-800 mb-2">File Preview</h1>
                     <p class="text-gray-600">${files.length} file${files.length !== 1 ? 's' : ''} available for preview and download</p>
                 </div>
-                
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     ${fileCards}
                 </div>
-                
                 <footer class="text-center mt-12 p-6 text-gray-500 text-sm">
                     Powered by ဒီဖိုင်
                 </footer>
             </div>
+            <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('.file-preview').forEach(function(container) {
+                    const shortCode = container.getAttribute('data-shortcode');
+                    fetch(`/s/${shortCode}?preview=true`).then(res => res.text()).then(html => {
+                        // Try to extract just the preview element if the response is a full HTML page
+                        // Otherwise, just inject as-is
+                        let preview = html;
+                        // Optionally, you can parse and extract a specific element if needed
+                        container.innerHTML = preview;
+                    }).catch(() => {
+                        container.innerHTML = '<div class="flex items-center justify-center h-48 bg-red-50 rounded-lg"><span class="text-red-400">Preview failed</span></div>';
+                    });
+                });
+            });
+            </script>
         </body>
         </html>
     `;
