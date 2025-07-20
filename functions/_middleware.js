@@ -545,7 +545,20 @@ async function handlePublicListGet(request, env) {
     }
 
     const filesInList = listData.files || [];
-    return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
+    
+    // Check if download is requested for a specific file
+    const download = url.searchParams.get('dl');
+    const fileIndex = url.searchParams.get('file');
+    
+    if (download === '1' && fileIndex !== null) {
+        const fileData = filesInList[parseInt(fileIndex)];
+        if (fileData) {
+            return streamFile(fileData, env);
+        }
+    }
+    
+    // Default: show preview grid
+    return new Response(getPublicListPreviewGrid(filesInList, listShortCode), { headers: { 'Content-Type': 'text/html' } });
 }
 
 async function handlePublicListPost(request, env) {
@@ -561,7 +574,7 @@ async function handlePublicListPost(request, env) {
 
     if (listData.passcode && submittedPasscode === listData.passcode) {
         const filesInList = listData.files || [];
-        return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPublicListPreviewGrid(filesInList, listShortCode), { headers: { 'Content-Type': 'text/html' } });
     } else {
         return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, true, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
@@ -1173,6 +1186,101 @@ function getPublicListPage(files) {
                  <footer class="text-center p-6 text-slate-500 text-sm">
                      Powered by ဒီဖိုင်
                  </footer>
+            </div>
+        </body>
+        </html>
+    `;
+}
+
+function getPublicListPreviewGrid(files, listShortCode) {
+    const formatBytes = (bytes, decimals = 2) => {
+        if (!bytes || bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    };
+
+    const getFileIcon = (mimeType) => {
+        if (mimeType.startsWith('image/')) return '🖼️';
+        if (mimeType.startsWith('video/')) return '🎥';
+        if (mimeType.startsWith('audio/')) return '🎵';
+        if (mimeType === 'text/plain') return '📄';
+        if (mimeType.startsWith('text/')) return '📝';
+        if (mimeType === 'application/pdf') return '📕';
+        if (mimeType.includes('word') || mimeType.includes('document')) return '📘';
+        if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return '📗';
+        if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return '📙';
+        if (mimeType.includes('zip') || mimeType.includes('archive')) return '📦';
+        if (mimeType.includes('json')) return '📋';
+        if (mimeType.includes('xml')) return '📄';
+        return '📁';
+    };
+
+    const fileCards = files.map((file, index) => {
+        const fileIcon = getFileIcon(file.mimeType || 'application/octet-stream');
+        const shortCode = file.shortUrl.split('/s/')[1];
+        const previewUrl = `/s/${shortCode}`;
+        const downloadUrl = `/l/${listShortCode}?dl=1&file=${index}`;
+        
+        return `
+            <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
+                <div class="p-6">
+                    <div class="flex items-center space-x-3 mb-4">
+                        <div class="text-3xl">${fileIcon}</div>
+                        <div class="flex-1 min-w-0">
+                            <h3 class="text-lg font-semibold text-gray-800 truncate" title="${file.fileName}">${file.fileName}</h3>
+                            <p class="text-sm text-gray-500">${formatBytes(file.fileSize)}</p>
+                        </div>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <a href="${previewUrl}" 
+                           class="block w-full text-center px-4 py-2 bg-blue-50 text-blue-600 font-medium rounded-lg hover:bg-blue-100 transition-colors">
+                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                            </svg>
+                            Preview
+                        </a>
+                        
+                        <a href="${downloadUrl}" 
+                           class="block w-full text-center px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors">
+                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                            </svg>
+                            Download
+                        </a>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>File Preview Grid</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="bg-gray-100 min-h-screen">
+            <div class="container mx-auto max-w-7xl p-6">
+                <div class="mb-8">
+                    <h1 class="text-3xl font-bold text-gray-800 mb-2">File Preview Grid</h1>
+                    <p class="text-gray-600">${files.length} file${files.length !== 1 ? 's' : ''} available for preview and download</p>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                    ${fileCards}
+                </div>
+                
+                <footer class="text-center mt-12 p-6 text-gray-500 text-sm">
+                    Powered by ဒီဖိုင်
+                </footer>
             </div>
         </body>
         </html>
