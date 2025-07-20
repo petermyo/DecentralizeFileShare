@@ -1213,7 +1213,7 @@ function getPublicListPreviewGrid(files, listShortCode) {
         const downloadUrl = `/s/${shortCode}?dl=1`;
         const mimeType = file.mimeType || 'application/octet-stream';
         
-        // Generate preview content based on file type
+        // Generate preview content based on file type using getFilePreview logic
         let previewContent = '';
         if (mimeType.startsWith('image/')) {
             previewContent = `
@@ -1231,8 +1231,33 @@ function getPublicListPreviewGrid(files, listShortCode) {
                     </video>
                 </div>
             `;
+        } else if (mimeType.startsWith('audio/')) {
+            previewContent = `
+                <div class="mb-4">
+                    <audio controls class="w-full">
+                        <source src="/s/${shortCode}?dl=1" type="${mimeType}">
+                        Your browser does not support the audio tag.
+                    </audio>
+                </div>
+            `;
+        } else if (mimeType === 'application/pdf') {
+            previewContent = `
+                <div class="mb-4">
+                    <iframe src="/s/${shortCode}?dl=1" class="w-full h-48 rounded-lg shadow-sm" frameborder="0"></iframe>
+                </div>
+            `;
+        } else if (mimeType === 'text/plain' || mimeType.startsWith('text/')) {
+            previewContent = `
+                <div class="mb-4 flex items-center justify-center h-48 bg-gray-50 rounded-lg">
+                    <div class="text-center">
+                        <div class="text-6xl mb-2">📄</div>
+                        <p class="text-sm text-gray-500">TEXT FILE</p>
+                        <p class="text-xs text-gray-400 mt-1">Click to view content</p>
+                    </div>
+                </div>
+            `;
         } else {
-            // For non-media files, show icon and file info
+            // For other file types, show icon and file info
             previewContent = `
                 <div class="mb-4 flex items-center justify-center h-48 bg-gray-50 rounded-lg">
                     <div class="text-center">
