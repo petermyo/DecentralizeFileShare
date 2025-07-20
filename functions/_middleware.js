@@ -325,7 +325,7 @@ async function handleShortUrlGet(request, env) {
     if (fileData.passcode) {
         return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
     }
-
+    //File preview added
     // Check if preview is requested
     const preview = url.searchParams.get('preview');
     if (preview === 'true') {
