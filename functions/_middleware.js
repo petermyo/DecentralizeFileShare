@@ -1,14 +1,14 @@
 /**
  * =================================================================================
- * Cloudflare Pages Function: Unified Top-Level Middleware
+ * Cloudflare Pages Function: Top-Level Middleware
  * CORRECT FILE PATH: /functions/_middleware.js
  * =================================================================================
  *
- * This single, unified file handles all backend routing for the entire application,
- * including the main API, admin API, and public link redirects. This simplifies
- * the project structure and resolves routing issues.
+ * This version adds full CRUD functionality for file lists and fixes the
+ * public list view rendering.
  *
  */
+
 // --- Import JWT Library ---
 import * as jose from 'jose';
 
@@ -18,8 +18,6 @@ const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const GOOGLE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
-const ADMIN_USER_IDS = ['118136495390756743317', '108180268584101876155'];
-
 
 /**
  * Main request handler. This function is the entry point for all requests.
@@ -29,28 +27,38 @@ export const onRequest = async (context) => {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // --- Main Router ---
-    if (path.startsWith('/api/admin/')) {
-        return handleAdminApiRequest(request, env);
-    }
+    // Route API requests
     if (path.startsWith('/api/')) {
         return handleApiRequest(request, env);
     }
+
+    // Route short URL redirects for individual files
     if (path.startsWith('/s/')) {
-        if (request.method === 'GET') return handleShortUrlGet(request, env);
-        if (request.method === 'POST') return handleShortUrlPost(request, env);
-    }
-    if (path.startsWith('/l/')) {
-        if (request.method === 'GET') return handlePublicListGet(request, env);
-        if (request.method === 'POST') return handlePublicListPost(request, env);
+        if (request.method === 'GET') {
+            return handleShortUrlGet(request, env);
+        }
+        if (request.method === 'POST') {
+            return handleShortUrlPost(request, env);
+        }
     }
     
-    // For all other requests (e.g., /, /admin), let Pages serve the static HTML file.
+    // Route public list views
+    if (path.startsWith('/l/')) {
+        if (request.method === 'GET') {
+            return handlePublicListGet(request, env);
+        }
+        if (request.method === 'POST') {
+            return handlePublicListPost(request, env);
+        }
+    }
+
+
+    // For all other requests, pass through to the static asset handler (serves the frontend)
     return next();
 }
 
 /**
- * Handles all non-admin requests prefixed with /api/
+ * Handles all requests prefixed with /api/
  */
 async function handleApiRequest(request, env) {
     const url = new URL(request.url);
@@ -89,45 +97,6 @@ async function handleApiRequest(request, env) {
     return new Response('API route not found or method not allowed', { status: 404 });
 }
 
-/**
- * Handles all requests prefixed with /api/admin/
- */
-async function handleAdminApiRequest(request, env) {
-    // First, run the authorization middleware
-    const authResponse = await isAdmin(request, env);
-    if (authResponse.status !== 200) {
-        return authResponse;
-    }
-
-    const url = new URL(request.url);
-    const path = url.pathname;
-    
-    // Admin API router logic
-    switch (path) {
-        case '/api/admin/stats':
-            return getStats(env);
-        case '/api/admin/users':
-            return getUsers(env);
-        case '/api/admin/revoke':
-            return revokeUserAccess(request, env);
-        case '/api/admin/files':
-            return getAllFiles(env);
-        case '/api/admin/lists':
-            return getAllLists(env);
-        case '/api/admin/delete-file':
-            return deleteFileAsAdmin(request, env);
-        case '/api/admin/delete-list':
-            return deleteListAsAdmin(request, env);
-        case '/api/admin/user-files':
-            return getUserFiles(request, env);
-        case '/api/admin/user-lists':
-            return getUserLists(request, env);
-    }
-    
-    return new Response('Admin API route not found', { status: 404 });
-}
-
-
 // --- JWT & Cookie Helpers ---
 const getJwtSecret = (env) => new TextEncoder().encode(env.JWT_SECRET);
 
@@ -148,7 +117,7 @@ function createCookieHeader(name, value, options = {}) {
     return cookie;
 }
 
-// --- Auth Helpers ---
+// --- Auth Helper ---
 async function getAuthenticatedUserId(request, env) {
     const token = getCookie(request, 'auth_token');
     if (!token) {
@@ -167,30 +136,6 @@ async function getAuthenticatedUserId(request, env) {
         throw new Response(responseBody, { status: 401, headers });
     }
 }
-
-async function isAdmin(request, env) {
-    const token = getCookie(request, 'auth_token');
-    if (!token) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-    }
-
-    try {
-        const { payload } = await jose.jwtVerify(token, await getJwtSecret(env));
-        if (!payload || !payload.userId) {
-            throw new Error('Invalid token payload.');
-        }
-
-        if (!ADMIN_USER_IDS.includes(payload.userId)) {
-            return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
-        }
-
-        return new Response(JSON.stringify({ success: true }), { status: 200 });
-
-    } catch (err) {
-        return new Response(JSON.stringify({ error: 'Invalid or expired token.' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
-    }
-}
-
 
 // --- Route Handlers ---
 function handleLogin(request, env) {
@@ -230,13 +175,10 @@ async function handleCallback(request, env) {
         });
         const profile = await profileResponse.json();
         const userId = profile.id;
-        const userName = profile.name || profile.email;
+        const userName = profile.name;
         const picture = profile.picture;
 
         await env.APP_KV.put(`user:${userId}`, JSON.stringify({
-            name: userName,
-            email: profile.email,
-            picture: picture,
             access_token: tokens.access_token,
             refresh_token: tokens.refresh_token,
             expires_in: tokens.expires_in,
@@ -291,7 +233,7 @@ async function handleUploadInitiate(request, env) {
             const now = new Date();
             const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
             const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const newFileName = `${time}_${date}_${file.fileName}`;
+            const newFileName = `${file.fileName}_${date}_${time}`;
 
             const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
 
@@ -344,17 +286,15 @@ async function handleUploadFinalize(request, env) {
             name: fileName,
             ownerId: userId,
             passcode: passcode || null,
-            expireDate: expireDate || null,
-            fileType // <-- store fileType
+            expireDate: expireDate || null
         }), { expirationTtl: 60 * 60 * 24 * 30 });
 
         const fileMeta = {
             fileId, fileName, originalName, fileSize,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
-            passcode: passcode || null,
-            expireDate: expireDate || null,
-            fileType // <-- store fileType
+            passcode: passcode || null, // FIX: Ensure passcode string is stored for editing
+            expireDate: expireDate || null
         };
         const historyKey = `history:upload:${userId}`;
         const existingHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
@@ -386,15 +326,7 @@ async function handleShortUrlGet(request, env) {
         return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
     }
 
-    // Handle preview and download query params
-    if (url.searchParams.get('preview') === '1') {
-        return streamFile(fileData, env, true);
-    }
-    if (url.searchParams.get('download') === '1') {
-        return streamFile(fileData, env, false);
-    }
-    // Default: show preview page
-    return new Response(getFilePreviewPage(shortCode, fileData), { headers: { 'Content-Type': 'text/html' } });
+    return streamFile(fileData, env);
 }
 
 async function handleShortUrlPost(request, env) {
@@ -562,7 +494,7 @@ async function handleListCreate(request, env) {
             shortUrl: listShortUrl,
             fileCount: listFiles.length,
             createdAt: new Date().toISOString(),
-            passcode: passcode || null,
+            passcode: passcode || null, // FIX: Store the actual passcode, not a boolean
             expireDate: expireDate || null
         });
         await env.APP_KV.put(listHistoryKey, JSON.stringify(existingListHistory));
@@ -666,6 +598,7 @@ async function handleListUpdate(request, env) {
         const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = listHistory.map(list => {
             if (list.shortUrl === shortUrl) {
+                // FIX: Store the actual passcode, not just a boolean
                 return { ...list, passcode: passcode || null, expireDate: expireDate || null };
             }
             return list;
@@ -676,132 +609,6 @@ async function handleListUpdate(request, env) {
     } catch (err) {
         if (err instanceof Response) return err;
         return new Response(JSON.stringify({ error: 'Failed to update list.' }), { status: 500 });
-    }
-}
-
-
-// --- Admin API Handlers ---
-async function getStats(env) {
-    const userKeys = await env.APP_KV.list({ prefix: "user:" });
-    const fileKeys = await env.APP_KV.list({ prefix: "shorturl:" });
-    const listKeys = await env.APP_KV.list({ prefix: "list:" });
-
-    return new Response(JSON.stringify({
-        totalUsers: userKeys.keys.length,
-        totalFiles: fileKeys.keys.length,
-        totalLists: listKeys.keys.length,
-    }), { headers: { 'Content-Type': 'application/json' } });
-}
-
-async function getUsers(env) {
-    const { keys } = await env.APP_KV.list({ prefix: "history:login:" });
-    const userHistoryData = await Promise.all(
-        keys.map(async (key) => {
-            const userId = key.name.split(':')[2];
-            const history = await env.APP_KV.get(key.name, { type: 'json' });
-            const lastLogin = history[history.length - 1];
-            
-            const fileHistoryKey = `history:upload:${userId}`;
-            const fileHistory = await env.APP_KV.get(fileHistoryKey, { type: 'json' }) || [];
-            
-            const userData = await env.APP_KV.get(`user:${userId}`, {type: 'json'}) || {};
-
-            return {
-                userId,
-                name: userData.name,
-                picture: userData.picture,
-                lastLogin: lastLogin.timestamp,
-                lastLoginIp: lastLogin.ip,
-                fileCount: fileHistory.length
-            };
-        })
-    );
-    return new Response(JSON.stringify(userHistoryData), { headers: { 'Content-Type': 'application/json' } });
-}
-
-async function revokeUserAccess(request, env) {
-    try {
-        const { userId } = await request.json();
-        if (!userId) {
-            return new Response(JSON.stringify({ error: 'User ID is required.' }), { status: 400 });
-        }
-
-        await env.APP_KV.delete(`user:${userId}`);
-        await env.APP_KV.delete(`history:login:${userId}`);
-        await env.APP_KV.delete(`history:upload:${userId}`);
-        await env.APP_KV.delete(`history:list:${userId}`);
-        
-        return new Response(JSON.stringify({ success: true, message: `Access and all records revoked for user ${userId}` }), { status: 200 });
-    } catch (err) {
-        return new Response(JSON.stringify({ error: 'Failed to revoke access.' }), { status: 500 });
-    }
-}
-
-async function getAllFiles(env) {
-    const { keys } = await env.APP_KV.list({ prefix: "shorturl:" });
-    const files = await Promise.all(keys.map(key => env.APP_KV.get(key.name, { type: 'json' })));
-    return new Response(JSON.stringify(files), { headers: { 'Content-Type': 'application/json' } });
-}
-
-async function getAllLists(env) {
-    const { keys } = await env.APP_KV.list({ prefix: "list:" });
-    const lists = await Promise.all(keys.map(async (key) => {
-        const listData = await env.APP_KV.get(key.name, { type: 'json' });
-        return {
-            shortCode: key.name.split(':')[1],
-            ...listData
-        };
-    }));
-    return new Response(JSON.stringify(lists), { headers: { 'Content-Type': 'application/json' } });
-}
-
-async function deleteFileAsAdmin(request, env) {
-     try {
-        const { fileId, shortCode, ownerId } = await request.json();
-        if (!fileId || !shortCode || !ownerId) {
-            return new Response(JSON.stringify({ error: "Missing required data" }), { status: 400 });
-        }
-
-        const tokenData = await env.APP_KV.get(`user:${ownerId}`, { type: 'json' });
-        if (tokenData) {
-            const accessToken = await getValidAccessToken(tokenData, ownerId, env);
-            await fetch(`${GOOGLE_DRIVE_API}/files/${fileId}`, {
-                method: 'DELETE',
-                headers: { 'Authorization': `Bearer ${accessToken}` }
-            });
-        }
-
-        await env.APP_KV.delete(`shorturl:${shortCode}`);
-        
-        const historyKey = `history:upload:${ownerId}`;
-        const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
-        const updatedHistory = fileHistory.filter(file => file.fileId !== fileId);
-        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
-
-        return new Response(JSON.stringify({ success: true }), { status: 200 });
-    } catch (err) {
-        return new Response(JSON.stringify({ error: 'Failed to delete file.' }), { status: 500 });
-    }
-}
-
-async function deleteListAsAdmin(request, env) {
-    try {
-        const { shortCode, ownerId } = await request.json();
-        if (!shortCode || !ownerId) {
-            return new Response(JSON.stringify({ error: "Missing required data" }), { status: 400 });
-        }
-        
-        await env.APP_KV.delete(`list:${shortCode}`);
-
-        const historyKey = `history:list:${ownerId}`;
-        const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
-        const shortUrl = `${new URL(request.url).origin}/l/${shortCode}`;
-        const updatedHistory = listHistory.filter(list => list.shortUrl !== shortUrl);
-        await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
-
-        return new Response(JSON.stringify({ success: true }), { status: 200 });
-    } catch (err) {
-        return new Response(JSON.stringify({ error: 'Failed to delete list.' }), { status: 500 });
     }
 }
 
@@ -851,13 +658,13 @@ async function findOrCreateFolder(accessToken, env) {
     return newFolder.id;
 }
 
-// Update streamFile to support inline or attachment
-async function streamFile(fileData, env, inline = false) {
+async function streamFile(fileData, env) {
     try {
         const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
         if (!ownerTokenData) throw new Error("File owner's token not found.");
 
         const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
+        
         const driveResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?alt=media`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
@@ -867,15 +674,9 @@ async function streamFile(fileData, env, inline = false) {
         }
 
         const headers = new Headers();
-        const type = fileData.fileType || 'application/octet-stream';
-        headers.set('Content-Type', type);
-        if (inline) {
-            headers.set('Content-Disposition', `inline; filename=\"${fileData.name}\"`);
-        } else {
-            headers.set('Content-Disposition', `attachment; filename=\"${fileData.name}\"`);
-        }
-        const contentLength = driveResponse.headers.get('Content-Length');
-        if (contentLength) headers.set('Content-Length', contentLength);
+        headers.set('Content-Type', 'application/octet-stream');
+        headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
+        headers.set('Content-Length', driveResponse.headers.get('Content-Length'));
 
         return new Response(driveResponse.body, { headers });
     } catch (err) {
@@ -926,35 +727,17 @@ function getPublicListPage(files) {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
     }
      
-     const fileRows = files.map(file => {
-        let preview = '';
-        const type = file.fileType || '';
-        if (type.startsWith('image/')) {
-            preview = `<a href="${file.shortUrl}?preview=1" target="_blank"><img src="${file.shortUrl}?preview=1" alt="Preview" class="h-16 w-16 object-cover rounded shadow" /></a>`;
-        } else if (type.startsWith('video/')) {
-            preview = `<a href="${file.shortUrl}?preview=1" target="_blank"><span class="inline-block h-16 w-16 bg-gray-200 flex items-center justify-center rounded shadow"><svg xmlns='http://www.w3.org/2000/svg' class='h-8 w-8 text-gray-500' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M14.752 11.168l-6.518-3.759A1 1 0 007 8.06v7.879a1 1 0 001.234.97l6.518-1.879A1 1 0 0016 14.06V9.94a1 1 0 00-1.248-.772z' /></svg></span></a>`;
-        } else if (type === 'application/pdf') {
-            preview = `<a href="${file.shortUrl}?preview=1" target="_blank"><span class="inline-block h-16 w-16 bg-red-100 flex items-center justify-center rounded shadow"><svg xmlns='http://www.w3.org/2000/svg' class='h-8 w-8 text-red-500' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 4v16m8-8H4' /></svg></span></a>`;
-        } else {
-            preview = `<span class="inline-block h-16 w-16 bg-gray-100 flex items-center justify-center rounded shadow"><svg xmlns='http://www.w3.org/2000/svg' class='h-8 w-8 text-gray-400' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M4 12V8a2 2 0 012-2h12a2 2 0 012 2v4M4 12v4m16-4v4' /></svg></span>`;
-        }
-        return `
+     const fileRows = files.map(file => `
         <tr class="border-b border-slate-200">
             <td class="p-4 text-slate-800">
-                <div class="flex items-center gap-4">
-                    ${preview}
-                    <div>
-                        <div class="font-medium">${file.fileName}</div>
-                        <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
-                    </div>
-                </div>
+                <div class="font-medium">${file.fileName}</div>
+                <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
             </td>
             <td class="p-4 text-center">
                 <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Download</a>
             </td>
         </tr>
-    `;
-    }).join('');
+    `).join('');
 
     return `
         <!DOCTYPE html>
@@ -990,41 +773,5 @@ function getPublicListPage(files) {
             </div>
         </body>
         </html>
-    `;
-}
-
-// Helper: Generate preview HTML for a file
-function getFilePreviewPage(shortCode, fileData) {
-    const downloadUrl = `/s/${shortCode}?download=1`;
-    let previewHtml = '';
-    const type = fileData.fileType || '';
-    if (type.startsWith('image/')) {
-        previewHtml = `<img src="/s/${shortCode}?preview=1" alt="Preview" class="max-w-full max-h-96 mx-auto" />`;
-    } else if (type.startsWith('video/')) {
-        previewHtml = `<video controls class="max-w-full max-h-96 mx-auto"><source src="/s/${shortCode}?preview=1" type="${type}">Your browser does not support the video tag.</video>`;
-    } else if (type === 'application/pdf') {
-        previewHtml = `<iframe src="/s/${shortCode}?preview=1" class="w-full h-96 border rounded"></iframe>`;
-    } else {
-        previewHtml = `<div class="text-gray-500 text-center">No preview available for this file type.</div>`;
-    }
-    return `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>File Preview - ${fileData.name}</title>
-        <script src="https://cdn.tailwindcss.com"></script>
-    </head>
-    <body class="bg-gray-100 flex items-center justify-center min-h-screen">
-        <div class="w-full max-w-2xl p-8 space-y-6 bg-white rounded-lg shadow-md">
-            <h2 class="text-2xl font-bold text-center text-gray-800 mb-2">${fileData.name}</h2>
-            <div class="flex justify-center items-center mb-4">${previewHtml}</div>
-            <div class="flex justify-center">
-                <a href="${downloadUrl}" class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 font-semibold">Download</a>
-            </div>
-        </div>
-    </body>
-    </html>
     `;
 }
