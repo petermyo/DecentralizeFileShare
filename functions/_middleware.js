@@ -311,35 +311,39 @@ async function handleUploadFinalize(request, env) {
 
 
 async function handleShortUrlGet(request, env) {
-    const url = new URL(request.url);
-    const shortCode = url.pathname.split('/s/')[1];
-    if (!shortCode) return new Response('Invalid URL', { status: 400 });
+    try {
+        const url = new URL(request.url);
+        const shortCode = url.pathname.split('/s/')[1];
+        if (!shortCode) return new Response('Invalid URL', { status: 400 });
 
-    const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
-    if (!fileData) return new Response('URL not found or expired', { status: 404 });
+        const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+        if (!fileData) return new Response('URL not found or expired', { status: 404 });
 
-    if (fileData.expireDate && new Date(fileData.expireDate) < new Date()) {
-        return new Response('This link has expired.', { status: 403 });
+        if (fileData.expireDate && new Date(fileData.expireDate) < new Date()) {
+            return new Response('This link has expired.', { status: 403 });
+        }
+
+        if (fileData.passcode) {
+            return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
+        }
+
+        // Check if download is requested
+        const download = url.searchParams.get('dl');
+        if (download === '1') {
+            return streamFile(fileData, env);
+        }
+
+        // Check if preview is requested
+        const preview = url.searchParams.get('preview');
+        if (preview === 'true') {
+            return streamFile(fileData, env, { asPreview: true });
+        }
+
+        // Default: show preview page
+        return getFilePreview(fileData, env, shortCode);
+    } catch (err) {
+        return new Response('Internal Server Error', { status: 500 });
     }
-
-    if (fileData.passcode) {
-        return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
-    }
-
-    // Check if download is requested
-    const download = url.searchParams.get('dl');
-    if (download === '1') {
-        return streamFile(fileData, env);
-    }
-
-    // Check if preview is requested
-    const preview = url.searchParams.get('preview');
-    if (preview === 'true') {
-        return streamFile(fileData, env, { asPreview: true });
-    }
-
-    // Default: show preview page
-    return getFilePreview(fileData, env, shortCode);
 }
 
 async function handleShortUrlPost(request, env) {
