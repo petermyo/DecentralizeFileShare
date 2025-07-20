@@ -1194,28 +1194,11 @@ function getPublicListPreviewGrid(files, listShortCode) {
     const fileCards = files.map((file, index) => {
         const shortCode = file.shortUrl.split('/s/')[1];
         const downloadUrl = `/s/${shortCode}?dl=1`;
-        return `
-            <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
-                <div class="p-6">
-                    <div class="file-preview" id="preview-${shortCode}" data-shortcode="${shortCode}">
+        return `<div class="file-preview" id="preview-${shortCode}" data-shortcode="${shortCode}">
                         <div class="flex items-center justify-center h-48 bg-gray-50 rounded-lg animate-pulse">
                             <span class="text-gray-400">Loading preview...</span>
                         </div>
-                    </div>
-                    <div class="mb-4">
-                        <h3 class="text-lg font-semibold text-gray-800 truncate mb-1" title="${file.fileName}">${file.fileName}</h3>
-                        <p class="text-sm text-gray-500">${formatBytes(file.fileSize)}</p>
-                    </div>
-                    <a href="${downloadUrl}" 
-                       class="block w-full text-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors">
-                        <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                        </svg>
-                        Download
-                    </a>
-                </div>
-            </div>
-        `;
+                </div>`;
     }).join('');
 
     const html = `
