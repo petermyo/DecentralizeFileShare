@@ -1245,17 +1245,14 @@ function getPublicListPreviewGrid(files, listShortCode) {
                 document.querySelectorAll('.file-preview').forEach(function(container) {
                     const shortCode = container.getAttribute('data-shortcode');
                     fetch(`/s/${shortCode}?preview=true`).then(res => res.text()).then(html => {
-                        // Try to extract just the preview element if the response is a full HTML page
-                        // Otherwise, just inject as-is
                         let preview = html;
-                        // Optionally, you can parse and extract a specific element if needed
                         container.innerHTML = preview;
                     }).catch(() => {
                         container.innerHTML = '<div class="flex items-center justify-center h-48 bg-red-50 rounded-lg"><span class="text-red-400">Preview failed</span></div>';
                     });
                 });
             });
-            </script>
+            <\/script>
         </body>
         </html>
     `;
