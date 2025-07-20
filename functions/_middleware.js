@@ -233,7 +233,7 @@ async function handleUploadInitiate(request, env) {
             const now = new Date();
             const date = now.toLocaleDateString('en-GB').replace(/\//g, '-');
             const time = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-            const newFileName = `${file.fileName}`;
+            const newFileName = `${file.fileName}_${date}_${time}`;
 
             const metadata = { name: newFileName, parents: [folderId], mimeType: file.fileType };
 
@@ -311,39 +311,22 @@ async function handleUploadFinalize(request, env) {
 
 
 async function handleShortUrlGet(request, env) {
-    try {
-        const url = new URL(request.url);
-        const shortCode = url.pathname.split('/s/')[1];
-        if (!shortCode) return new Response('Invalid URL', { status: 400 });
+    const url = new URL(request.url);
+    const shortCode = url.pathname.split('/s/')[1];
+    if (!shortCode) return new Response('Invalid URL', { status: 400 });
 
-        const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
-        if (!fileData) return new Response('URL not found or expired', { status: 404 });
+    const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+    if (!fileData) return new Response('URL not found or expired', { status: 404 });
 
-        if (fileData.expireDate && new Date(fileData.expireDate) < new Date()) {
-            return new Response('This link has expired.', { status: 403 });
-        }
-
-        if (fileData.passcode) {
-            return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
-        }
-
-        // Check if download is requested
-        const download = url.searchParams.get('dl');
-        if (download === '1') {
-            return streamFile(fileData, env);
-        }
-
-        // Check if preview is requested
-        const preview = url.searchParams.get('preview');
-        if (preview === 'true') {
-            return streamFile(fileData, env, { asPreview: true });
-        }
-
-        // Default: show preview page
-        return getFilePreview(fileData, env, shortCode);
-    } catch (err) {
-        return new Response('Internal Server Error', { status: 500 });
+    if (fileData.expireDate && new Date(fileData.expireDate) < new Date()) {
+        return new Response('This link has expired.', { status: 403 });
     }
+
+    if (fileData.passcode) {
+        return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
+    }
+
+    return streamFile(fileData, env);
 }
 
 async function handleShortUrlPost(request, env) {
@@ -358,10 +341,7 @@ async function handleShortUrlPost(request, env) {
     const submittedPasscode = formData.get('passcode');
 
     if (fileData.passcode && submittedPasscode === fileData.passcode) {
-        // Redirect to preview page after successful passcode
-        const headers = new Headers();
-        headers.set('Location', `/s/${shortCode}`);
-        return new Response(null, { status: 302, headers });
+        return streamFile(fileData, env);
     } else {
         return new Response(getPasscodePage(shortCode, fileData.name, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
@@ -555,9 +535,7 @@ async function handlePublicListGet(request, env) {
     }
 
     const filesInList = listData.files || [];
-    
-    // Show preview grid
-    return new Response(getPublicListPreviewGrid(filesInList, listShortCode), { headers: { 'Content-Type': 'text/html' } });
+    return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
 }
 
 async function handlePublicListPost(request, env) {
@@ -573,7 +551,7 @@ async function handlePublicListPost(request, env) {
 
     if (listData.passcode && submittedPasscode === listData.passcode) {
         const filesInList = listData.files || [];
-        return new Response(getPublicListPreviewGrid(filesInList, listShortCode), { headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
     } else {
         return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, true, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
@@ -680,7 +658,7 @@ async function findOrCreateFolder(accessToken, env) {
     return newFolder.id;
 }
 
-async function streamFile(fileData, env, options = {}) {
+async function streamFile(fileData, env) {
     try {
         const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
         if (!ownerTokenData) throw new Error("File owner's token not found.");
@@ -696,13 +674,8 @@ async function streamFile(fileData, env, options = {}) {
         }
 
         const headers = new Headers();
-        // For preview, set the actual content type and do not set attachment
-        if (options.asPreview) {
-            headers.set('Content-Type', driveResponse.headers.get('Content-Type') || 'application/octet-stream');
-        } else {
-            headers.set('Content-Type', 'application/octet-stream');
-            headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
-        }
+        headers.set('Content-Type', 'application/octet-stream');
+        headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
         headers.set('Content-Length', driveResponse.headers.get('Content-Length'));
 
         return new Response(driveResponse.body, { headers });
@@ -710,344 +683,6 @@ async function streamFile(fileData, env, options = {}) {
         console.error("Proxy download error:", err.message);
         return new Response('Error proxying the file.', { status: 500 });
     }
-}
-
-async function getFilePreview(fileData, env, shortCode) {
-    try {
-        const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
-        if (!ownerTokenData) throw new Error("File owner's token not found.");
-
-        const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
-        
-        // Get file metadata to check mime type
-        const metadataResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?fields=mimeType,size`, {
-            headers: { 'Authorization': `Bearer ${accessToken}` }
-        });
-
-        if (!metadataResponse.ok) {
-            return new Response('Could not fetch file metadata from Google Drive.', { status: metadataResponse.status });
-        }
-
-        const metadata = await metadataResponse.json();
-        const mimeType = metadata.mimeType;
-        const fileSize = metadata.size;
-
-        // Determine file type and return appropriate preview
-        if (mimeType.startsWith('image/')) {
-            return getImagePreviewPage(fileData.name, `/s/${shortCode}?preview=true`, `/s/${shortCode}`, shortCode);
-        } else if (mimeType.startsWith('video/')) {
-            return getVideoPreviewPage(fileData.name, `/s/${shortCode}?preview=true`, `/s/${shortCode}`, shortCode);
-        } else if (mimeType.startsWith('audio/')) {
-            return getAudioPreviewPage(fileData.name, `/s/${shortCode}?preview=true`, `/s/${shortCode}`, shortCode);
-        } else if (mimeType === 'text/plain' || mimeType.startsWith('text/')) {
-            return getTextPreview(fileData, env, accessToken, shortCode);
-        } else if (mimeType === 'application/pdf') {
-            return getPdfPreview(fileData, env, accessToken, shortCode);
-        } else {
-            // For other file types, show a generic preview with download option
-            return getGenericPreview(fileData, mimeType, fileSize, shortCode);
-        }
-    } catch (err) {
-        console.error("Preview error:", err.message);
-        return new Response('Error generating preview.', { status: 500 });
-    }
-}
-
-async function getImagePreview(fileData, env, accessToken, shortCode) {
-    const imageUrl = `/s/${shortCode}`;
-    const downloadUrl = `/s/${shortCode}`;
-
-    return new Response(getImagePreviewPage(fileData.name, imageUrl, downloadUrl, shortCode), {
-        headers: { 'Content-Type': 'text/html' }
-    });
-}
-
-async function getVideoPreview(fileData, env, accessToken, shortCode) {
-    const videoUrl = `/s/${shortCode}`;
-    const downloadUrl = `/s/${shortCode}`;
-
-    return new Response(getVideoPreviewPage(fileData.name, videoUrl, downloadUrl, shortCode), {
-        headers: { 'Content-Type': 'text/html' }
-    });
-}
-
-async function getAudioPreview(fileData, env, accessToken, shortCode) {
-    const audioUrl = `/s/${shortCode}`;
-    const downloadUrl = `/s/${shortCode}`;
-
-    return new Response(getAudioPreviewPage(fileData.name, audioUrl, downloadUrl, shortCode), {
-        headers: { 'Content-Type': 'text/html' }
-    });
-}
-
-async function getTextPreview(fileData, env, accessToken, shortCode) {
-    const driveResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?alt=media`, {
-        headers: { 'Authorization': `Bearer ${accessToken}` }
-    });
-
-    if (!driveResponse.ok) {
-        return new Response('Could not fetch text file from Google Drive.', { status: driveResponse.status });
-    }
-
-    const text = await driveResponse.text();
-    const previewText = text.length > 10000 ? text.substring(0, 10000) + '...' : text;
-
-    return new Response(getTextPreviewPage(fileData.name, previewText, text.length > 10000, shortCode), {
-        headers: { 'Content-Type': 'text/html' }
-    });
-}
-
-async function getPdfPreview(fileData, env, accessToken, shortCode) {
-    const pdfUrl = `/s/${shortCode}?preview=true`;
-    const downloadUrl = `/s/${shortCode}`;
-
-    return new Response(getPdfPreviewPage(fileData.name, pdfUrl, downloadUrl, shortCode), {
-        headers: { 'Content-Type': 'text/html' }
-    });
-}
-
-function getGenericPreview(fileData, mimeType, fileSize, shortCode) {
-    const formatBytes = (bytes, decimals = 2) => {
-        if (!bytes || bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const dm = decimals < 0 ? 0 : decimals;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-    };
-
-    const fileIcon = getFileIcon(mimeType);
-    const downloadUrl = `/s/${shortCode}`;
-
-    return new Response(`
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>File Preview - ${fileData.name}</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-gray-100 min-h-screen">
-            <div class="container mx-auto max-w-4xl p-6">
-                <div class="bg-white rounded-lg shadow-lg p-8">
-                    <div class="flex items-center space-x-4 mb-6">
-                        <div class="text-6xl">${fileIcon}</div>
-                        <div>
-                            <h1 class="text-2xl font-bold text-gray-800">${fileData.name}</h1>
-                            <p class="text-gray-600">${mimeType} • ${formatBytes(fileSize)}</p>
-                        </div>
-                    </div>
-                    
-                    <div class="border-t border-gray-200 pt-6">
-                        <p class="text-gray-700 mb-6">
-                            This file type cannot be previewed directly. Click the download button below to save the file to your device.
-                        </p>
-                        
-                        <div class="flex space-x-4">
-                            <a href="${downloadUrl}?dl=1" 
-                               class="inline-flex items-center px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-                                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                                Download File
-                            </a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
-    `, { headers: { 'Content-Type': 'text/html' } });
-}
-
-function getTextPreviewPage(fileName, content, isTruncated, shortCode) {
-    const downloadUrl = `/s/${shortCode}`;
-    
-    return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Text Preview - ${fileName}</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-gray-100 min-h-screen">
-            <div class="container mx-auto max-w-6xl p-6">
-                <div class="bg-white rounded-lg shadow-lg">
-                    <div class="border-b border-gray-200 p-6">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-3">
-                                <div class="text-3xl">📄</div>
-                                <div>
-                                    <h1 class="text-xl font-bold text-gray-800">${fileName}</h1>
-                                    <p class="text-gray-600">Text file preview</p>
-                                </div>
-                            </div>
-                            <a href="${downloadUrl}?dl=1" 
-                               class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                                Download
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="p-6">
-                        ${isTruncated ? '<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4"><p class="text-yellow-800 text-sm">⚠️ This is a preview of the first 10,000 characters. Download the full file to see all content.</p></div>' : ''}
-                        
-                        <pre class="bg-gray-50 p-4 rounded-lg overflow-x-auto text-sm text-gray-800 whitespace-pre-wrap font-mono">${content.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
-    `;
-}
-
-// 1. Update preview templates to use ?preview=true
-function getImagePreviewPage(fileName, imageUrl, downloadUrl, shortCode) {
-    return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Image Preview - ${fileName}</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-gray-100 min-h-screen flex items-center justify-center">
-            <div class="bg-white rounded-lg shadow-lg max-w-2xl w-full p-8 flex flex-col">
-                <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
-                </div>
-                <div class="flex-1 flex items-center justify-center mb-6">
-                    <img src="/s/${shortCode}?preview=true" alt="${fileName}" class="max-w-full max-h-[60vh] object-contain rounded-lg shadow" />
-                </div>
-                <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
-                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                    </svg>
-                    Download
-                </a>
-            </div>
-        </body>
-        </html>
-    `;
-}
-
-function getVideoPreviewPage(fileName, videoUrl, downloadUrl, shortCode) {
-    return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Video Preview - ${fileName}</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-gray-100 min-h-screen flex items-center justify-center">
-            <div class="bg-white rounded-lg shadow-lg max-w-2xl w-full p-8 flex flex-col">
-                <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
-                </div>
-                <div class="flex-1 flex items-center justify-center mb-6">
-                    <video controls class="w-full max-h-[60vh] rounded-lg shadow">
-                        <source src="/s/${shortCode}?preview=true" type="video/*">
-                        Your browser does not support the video tag.
-                    </video>
-                </div>
-                <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
-                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                    </svg>
-                    Download
-                </a>
-            </div>
-        </body>
-        </html>
-    `;
-}
-
-function getAudioPreviewPage(fileName, audioUrl, downloadUrl, shortCode) {
-    return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Audio Preview - ${fileName}</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-gray-100 min-h-screen flex items-center justify-center">
-            <div class="bg-white rounded-lg shadow-lg max-w-2xl w-full p-8 flex flex-col">
-                <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
-                </div>
-                <div class="flex-1 flex items-center justify-center mb-6">
-                    <audio controls class="w-full">
-                        <source src="/s/${shortCode}?preview=true" type="audio/*">
-                        Your browser does not support the audio tag.
-                    </audio>
-                </div>
-                <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
-                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                    </svg>
-                    Download
-                </a>
-            </div>
-        </body>
-        </html>
-    `;
-}
-
-function getPdfPreviewPage(fileName, pdfUrl, downloadUrl, shortCode) {
-    return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>PDF Preview - ${fileName}</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-gray-100 min-h-screen flex items-center justify-center">
-            <div class="bg-white rounded-lg shadow-lg max-w-2xl w-full p-8 flex flex-col">
-                <div class="mb-6">
-                    <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
-                </div>
-                <div class="flex-1 flex items-center justify-center mb-6">
-                    <iframe src="/s/${shortCode}?preview=true" class="w-full h-96 rounded-lg shadow" frameborder="0"></iframe>
-                </div>
-                <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
-                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                    </svg>
-                    Download
-                </a>
-            </div>
-        </body>
-        </html>
-    `;
-}
-
-function getFileIcon(mimeType) {
-    if (mimeType.startsWith('image/')) return '🖼️';
-    if (mimeType.startsWith('video/')) return '🎥';
-    if (mimeType.startsWith('audio/')) return '🎵';
-    if (mimeType === 'text/plain') return '📄';
-    if (mimeType.startsWith('text/')) return '📝';
-    if (mimeType === 'application/pdf') return '📕';
-    if (mimeType.includes('word') || mimeType.includes('document')) return '📘';
-    if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return '📗';
-    if (mimeType.includes('powerpoint') || mimeType.includes('presentation')) return '📙';
-    if (mimeType.includes('zip') || mimeType.includes('archive')) return '📦';
-    if (mimeType.includes('json')) return '📋';
-    if (mimeType.includes('xml')) return '📄';
-    return '📁';
 }
 
 function getPasscodePage(shortCode, fileName, hasError = false, isList = false) {
@@ -1099,7 +734,7 @@ function getPublicListPage(files) {
                 <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
             </td>
             <td class="p-4 text-center">
-                <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Preview</a>
+                <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Download</a>
             </td>
         </tr>
     `).join('');
@@ -1139,67 +774,4 @@ function getPublicListPage(files) {
         </body>
         </html>
     `;
-}
-
-function getPublicListPreviewGrid(files, listShortCode) {
-    const formatBytes = (bytes, decimals = 2) => {
-        if (!bytes || bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const dm = decimals < 0 ? 0 : decimals;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
-    };
-
-    const fileCards = files.map((file, index) => {
-        const shortCode = file.shortUrl.split('/s/')[1];
-        const downloadUrl = `/s/${shortCode}?dl=1`;
-        return `<div class="file-preview" id="preview-${shortCode}" data-shortcode="${shortCode}">
-                        <div class="flex items-center justify-center h-48 bg-gray-50 rounded-lg animate-pulse">
-                            <span class="text-gray-400">Loading preview...</span>
-                        </div>
-                </div>`;
-    }).join('');
-
-    const html = `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>File Preview</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-        </head>
-        <body class="bg-gray-100 min-h-screen">
-            <div class="container mx-auto max-w-7xl p-6">
-                <div class="mb-8">
-                    <h1 class="text-3xl font-bold text-gray-800 mb-2">File Preview</h1>
-                    <p class="text-gray-600">${files.length} file${files.length !== 1 ? 's' : ''} available for preview and download</p>
-                </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    ${fileCards}
-                </div>
-                <footer class="text-center mt-12 p-6 text-gray-500 text-sm">
-                    Powered by ဒီဖိုင်
-                </footer>
-            </div>
-        </body>
-        </html>
-    `;
-
-    const script = `
-    <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        document.querySelectorAll('.file-preview').forEach(function(container) {
-            const shortCode = container.getAttribute('data-shortcode');
-            fetch('/s/' + shortCode + '?preview=true').then(res => res.text()).then(html => {
-                container.innerHTML = html;
-            }).catch(() => {
-                container.innerHTML = '<div class=\"flex items-center justify-center h-48 bg-red-50 rounded-lg\"><span class=\"text-red-400\">Preview failed</span></div>';
-            });
-        });
-    });
-    </script>
-    `;
-    return html + script;
 }
