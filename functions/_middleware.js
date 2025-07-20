@@ -546,18 +546,7 @@ async function handlePublicListGet(request, env) {
 
     const filesInList = listData.files || [];
     
-    // Check if download is requested for a specific file
-    const download = url.searchParams.get('dl');
-    const fileIndex = url.searchParams.get('file');
-    
-    if (download === '1' && fileIndex !== null) {
-        const fileData = filesInList[parseInt(fileIndex)];
-        if (fileData) {
-            return streamFile(fileData, env);
-        }
-    }
-    
-    // Default: show preview grid
+    // Show preview grid
     return new Response(getPublicListPreviewGrid(filesInList, listShortCode), { headers: { 'Content-Type': 'text/html' } });
 }
 
@@ -1221,38 +1210,56 @@ function getPublicListPreviewGrid(files, listShortCode) {
     const fileCards = files.map((file, index) => {
         const fileIcon = getFileIcon(file.mimeType || 'application/octet-stream');
         const shortCode = file.shortUrl.split('/s/')[1];
-        const previewUrl = `/s/${shortCode}`;
-        const downloadUrl = `/l/${listShortCode}?dl=1&file=${index}`;
+        const downloadUrl = `/s/${shortCode}?dl=1`;
+        const mimeType = file.mimeType || 'application/octet-stream';
+        
+        // Generate preview content based on file type
+        let previewContent = '';
+        if (mimeType.startsWith('image/')) {
+            previewContent = `
+                <div class="mb-4">
+                    <img src="/s/${shortCode}?dl=1" alt="${file.fileName}" 
+                         class="w-full h-48 object-cover rounded-lg shadow-sm">
+                </div>
+            `;
+        } else if (mimeType.startsWith('video/')) {
+            previewContent = `
+                <div class="mb-4">
+                    <video controls class="w-full h-48 object-cover rounded-lg shadow-sm">
+                        <source src="/s/${shortCode}?dl=1" type="${mimeType}">
+                        Your browser does not support the video tag.
+                    </video>
+                </div>
+            `;
+        } else {
+            // For non-media files, show icon and file info
+            previewContent = `
+                <div class="mb-4 flex items-center justify-center h-48 bg-gray-50 rounded-lg">
+                    <div class="text-center">
+                        <div class="text-6xl mb-2">${fileIcon}</div>
+                        <p class="text-sm text-gray-500">${mimeType.split('/')[1]?.toUpperCase() || 'FILE'}</p>
+                    </div>
+                </div>
+            `;
+        }
         
         return `
             <div class="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow">
                 <div class="p-6">
-                    <div class="flex items-center space-x-3 mb-4">
-                        <div class="text-3xl">${fileIcon}</div>
-                        <div class="flex-1 min-w-0">
-                            <h3 class="text-lg font-semibold text-gray-800 truncate" title="${file.fileName}">${file.fileName}</h3>
-                            <p class="text-sm text-gray-500">${formatBytes(file.fileSize)}</p>
-                        </div>
+                    ${previewContent}
+                    
+                    <div class="mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800 truncate mb-1" title="${file.fileName}">${file.fileName}</h3>
+                        <p class="text-sm text-gray-500">${formatBytes(file.fileSize)}</p>
                     </div>
                     
-                    <div class="space-y-3">
-                        <a href="${previewUrl}" 
-                           class="block w-full text-center px-4 py-2 bg-blue-50 text-blue-600 font-medium rounded-lg hover:bg-blue-100 transition-colors">
-                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
-                            </svg>
-                            Preview
-                        </a>
-                        
-                        <a href="${downloadUrl}" 
-                           class="block w-full text-center px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors">
-                            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                            Download
-                        </a>
-                    </div>
+                    <a href="${downloadUrl}" 
+                       class="block w-full text-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors">
+                        <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        Download
+                    </a>
                 </div>
             </div>
         `;
@@ -1264,13 +1271,13 @@ function getPublicListPreviewGrid(files, listShortCode) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>File Preview Grid</title>
+            <title>File Preview</title>
             <script src="https://cdn.tailwindcss.com"></script>
         </head>
         <body class="bg-gray-100 min-h-screen">
             <div class="container mx-auto max-w-7xl p-6">
                 <div class="mb-8">
-                    <h1 class="text-3xl font-bold text-gray-800 mb-2">File Preview Grid</h1>
+                    <h1 class="text-3xl font-bold text-gray-800 mb-2">File Preview</h1>
                     <p class="text-gray-600">${files.length} file${files.length !== 1 ? 's' : ''} available for preview and download</p>
                 </div>
                 
