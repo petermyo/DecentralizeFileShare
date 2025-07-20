@@ -411,24 +411,14 @@
                     for (const result of settledUploads) {
                         if (result.status === 'fulfilled') {
                             const { uploadedFile, session, file } = result.value;
-                            // const finalizeResponse = await fetch('/api/upload/finalize', {
-                            //     method: 'POST',
-                            //     headers: { 'Content-Type': 'application/json' },
-                            //     body: JSON.stringify({
-                            //         fileId: uploadedFile.id, fileName: session.newFileName, originalName: file.name,
-                            //         passcode, expireDate, fileSize: file.size
-                            //     })
-                            // });
-
                             const finalizeResponse = await fetch('/api/upload/finalize', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                     fileId: uploadedFile.id, fileName: session.newFileName, originalName: file.name,
-                                    passcode, expireDate, fileSize: file.size, fileType: file.type
+                                    passcode, expireDate, fileSize: file.size
                                 })
                             });
-                            
                             const finalResult = await finalizeResponse.json();
                             if (finalizeResponse.ok) {
                                 addFileToList(finalResult.fileMeta);
