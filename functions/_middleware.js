@@ -1243,16 +1243,16 @@ function getPublicListPreviewGrid(files, listShortCode) {
         </body>
         </html>
     `;
+
     const script = `
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.file-preview').forEach(function(container) {
             const shortCode = container.getAttribute('data-shortcode');
-            fetch(`/s/${shortCode}?preview=true`).then(res => res.text()).then(html => {
-                let preview = html;
-                container.innerHTML = preview;
+            fetch('/s/' + shortCode + '?preview=true').then(res => res.text()).then(html => {
+                container.innerHTML = html;
             }).catch(() => {
-                container.innerHTML = '<div class="flex items-center justify-center h-48 bg-red-50 rounded-lg"><span class="text-red-400">Preview failed</span></div>';
+                container.innerHTML = '<div class=\"flex items-center justify-center h-48 bg-red-50 rounded-lg\"><span class=\"text-red-400\">Preview failed</span></div>';
             });
         });
     });
