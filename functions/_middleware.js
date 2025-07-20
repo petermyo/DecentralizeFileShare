@@ -902,34 +902,20 @@ function getImagePreviewPage(fileName, imageUrl, downloadUrl) {
             <title>Image Preview - ${fileName}</title>
             <script src="https://cdn.tailwindcss.com"></script>
         </head>
-        <body class="bg-gray-100 min-h-screen">
-            <div class="container mx-auto max-w-6xl p-6">
-                <div class="bg-white rounded-lg shadow-lg">
-                    <div class="border-b border-gray-200 p-6">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-3">
-                                <div class="text-3xl">🖼️</div>
-                                <div>
-                                    <h1 class="text-xl font-bold text-gray-800">${fileName}</h1>
-                                    <p class="text-gray-600">Image preview</p>
-                                </div>
-                            </div>
-                            <a href="${downloadUrl}?dl=1" 
-                               class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                                Download
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="p-6">
-                        <div class="flex justify-center">
-                            <img src="${imageUrl}?dl=1" alt="${fileName}" class="max-w-full max-h-96 object-contain rounded-lg shadow-lg">
-                        </div>
-                    </div>
+        <body class="bg-gray-100 min-h-screen flex items-center justify-center">
+            <div class="bg-white rounded-lg shadow-lg max-w-2xl w-full p-8 flex flex-col">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
                 </div>
+                <div class="flex-1 flex items-center justify-center mb-6">
+                    <img src="${imageUrl}" alt="${fileName}" class="max-w-full max-h-[60vh] object-contain rounded-lg shadow" />
+                </div>
+                <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
+                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    Download
+                </a>
             </div>
         </body>
         </html>
@@ -946,37 +932,23 @@ function getVideoPreviewPage(fileName, videoUrl, downloadUrl) {
             <title>Video Preview - ${fileName}</title>
             <script src="https://cdn.tailwindcss.com"></script>
         </head>
-        <body class="bg-gray-100 min-h-screen">
-            <div class="container mx-auto max-w-6xl p-6">
-                <div class="bg-white rounded-lg shadow-lg">
-                    <div class="border-b border-gray-200 p-6">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-3">
-                                <div class="text-3xl">🎥</div>
-                                <div>
-                                    <h1 class="text-xl font-bold text-gray-800">${fileName}</h1>
-                                    <p class="text-gray-600">Video preview</p>
-                                </div>
-                            </div>
-                            <a href="${downloadUrl}?dl=1" 
-                               class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                                Download
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="p-6">
-                        <div class="flex justify-center">
-                            <video controls class="max-w-full max-h-96 rounded-lg shadow-lg">
-                                <source src="${videoUrl}?dl=1" type="video/*">
-                                Your browser does not support the video tag.
-                            </video>
-                        </div>
-                    </div>
+        <body class="bg-gray-100 min-h-screen flex items-center justify-center">
+            <div class="bg-white rounded-lg shadow-lg max-w-2xl w-full p-8 flex flex-col">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
                 </div>
+                <div class="flex-1 flex items-center justify-center mb-6">
+                    <video controls class="w-full max-h-[60vh] rounded-lg shadow">
+                        <source src="${videoUrl}" type="video/*">
+                        Your browser does not support the video tag.
+                    </video>
+                </div>
+                <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
+                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    Download
+                </a>
             </div>
         </body>
         </html>
@@ -993,37 +965,23 @@ function getAudioPreviewPage(fileName, audioUrl, downloadUrl) {
             <title>Audio Preview - ${fileName}</title>
             <script src="https://cdn.tailwindcss.com"></script>
         </head>
-        <body class="bg-gray-100 min-h-screen">
-            <div class="container mx-auto max-w-4xl p-6">
-                <div class="bg-white rounded-lg shadow-lg">
-                    <div class="border-b border-gray-200 p-6">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-3">
-                                <div class="text-3xl">🎵</div>
-                                <div>
-                                    <h1 class="text-xl font-bold text-gray-800">${fileName}</h1>
-                                    <p class="text-gray-600">Audio preview</p>
-                                </div>
-                            </div>
-                            <a href="${downloadUrl}?dl=1" 
-                               class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                                Download
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="p-6">
-                        <div class="flex justify-center">
-                            <audio controls class="w-full max-w-md">
-                                <source src="${audioUrl}?dl=1" type="audio/*">
-                                Your browser does not support the audio tag.
-                            </audio>
-                        </div>
-                    </div>
+        <body class="bg-gray-100 min-h-screen flex items-center justify-center">
+            <div class="bg-white rounded-lg shadow-lg max-w-2xl w-full p-8 flex flex-col">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
                 </div>
+                <div class="flex-1 flex items-center justify-center mb-6">
+                    <audio controls class="w-full">
+                        <source src="${audioUrl}" type="audio/*">
+                        Your browser does not support the audio tag.
+                    </audio>
+                </div>
+                <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
+                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    Download
+                </a>
             </div>
         </body>
         </html>
@@ -1040,34 +998,20 @@ function getPdfPreviewPage(fileName, pdfUrl, downloadUrl) {
             <title>PDF Preview - ${fileName}</title>
             <script src="https://cdn.tailwindcss.com"></script>
         </head>
-        <body class="bg-gray-100 min-h-screen">
-            <div class="container mx-auto max-w-6xl p-6">
-                <div class="bg-white rounded-lg shadow-lg">
-                    <div class="border-b border-gray-200 p-6">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-3">
-                                <div class="text-3xl">📕</div>
-                                <div>
-                                    <h1 class="text-xl font-bold text-gray-800">${fileName}</h1>
-                                    <p class="text-gray-600">PDF preview</p>
-                                </div>
-                            </div>
-                            <a href="${downloadUrl}?dl=1" 
-                               class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors">
-                                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                                Download
-                            </a>
-                        </div>
-                    </div>
-                    
-                    <div class="p-6">
-                        <div class="flex justify-center">
-                            <iframe src="${pdfUrl}?dl=1" class="w-full h-96 rounded-lg shadow-lg" frameborder="0"></iframe>
-                        </div>
-                    </div>
+        <body class="bg-gray-100 min-h-screen flex items-center justify-center">
+            <div class="bg-white rounded-lg shadow-lg max-w-2xl w-full p-8 flex flex-col">
+                <div class="mb-6">
+                    <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
                 </div>
+                <div class="flex-1 flex items-center justify-center mb-6">
+                    <iframe src="${pdfUrl}?dl=1" class="w-full h-96 rounded-lg shadow" frameborder="0"></iframe>
+                </div>
+                <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
+                    <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                    Download
+                </a>
             </div>
         </body>
         </html>
