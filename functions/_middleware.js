@@ -332,6 +332,12 @@ async function handleShortUrlGet(request, env) {
         return streamFile(fileData, env);
     }
 
+    // Check if preview is requested
+    const preview = url.searchParams.get('preview');
+    if (preview === 'true') {
+        return streamFile(fileData, env, { asPreview: true });
+    }
+
     // Default: show preview page
     return getFilePreview(fileData, env, shortCode);
 }
@@ -670,7 +676,7 @@ async function findOrCreateFolder(accessToken, env) {
     return newFolder.id;
 }
 
-async function streamFile(fileData, env) {
+async function streamFile(fileData, env, options = {}) {
     try {
         const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
         if (!ownerTokenData) throw new Error("File owner's token not found.");
@@ -686,8 +692,13 @@ async function streamFile(fileData, env) {
         }
 
         const headers = new Headers();
-        headers.set('Content-Type', 'application/octet-stream');
-        headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
+        // For preview, set the actual content type and do not set attachment
+        if (options.asPreview) {
+            headers.set('Content-Type', driveResponse.headers.get('Content-Type') || 'application/octet-stream');
+        } else {
+            headers.set('Content-Type', 'application/octet-stream');
+            headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
+        }
         headers.set('Content-Length', driveResponse.headers.get('Content-Length'));
 
         return new Response(driveResponse.body, { headers });
@@ -719,11 +730,11 @@ async function getFilePreview(fileData, env, shortCode) {
 
         // Determine file type and return appropriate preview
         if (mimeType.startsWith('image/')) {
-            return getImagePreview(fileData, env, accessToken, shortCode);
+            return getImagePreviewPage(fileData.name, `/s/${shortCode}?preview=true`, `/s/${shortCode}`, shortCode);
         } else if (mimeType.startsWith('video/')) {
-            return getVideoPreview(fileData, env, accessToken, shortCode);
+            return getVideoPreviewPage(fileData.name, `/s/${shortCode}?preview=true`, `/s/${shortCode}`, shortCode);
         } else if (mimeType.startsWith('audio/')) {
-            return getAudioPreview(fileData, env, accessToken, shortCode);
+            return getAudioPreviewPage(fileData.name, `/s/${shortCode}?preview=true`, `/s/${shortCode}`, shortCode);
         } else if (mimeType === 'text/plain' || mimeType.startsWith('text/')) {
             return getTextPreview(fileData, env, accessToken, shortCode);
         } else if (mimeType === 'application/pdf') {
@@ -742,7 +753,7 @@ async function getImagePreview(fileData, env, accessToken, shortCode) {
     const imageUrl = `/s/${shortCode}`;
     const downloadUrl = `/s/${shortCode}`;
 
-    return new Response(getImagePreviewPage(fileData.name, imageUrl, downloadUrl), {
+    return new Response(getImagePreviewPage(fileData.name, imageUrl, downloadUrl, shortCode), {
         headers: { 'Content-Type': 'text/html' }
     });
 }
@@ -751,7 +762,7 @@ async function getVideoPreview(fileData, env, accessToken, shortCode) {
     const videoUrl = `/s/${shortCode}`;
     const downloadUrl = `/s/${shortCode}`;
 
-    return new Response(getVideoPreviewPage(fileData.name, videoUrl, downloadUrl), {
+    return new Response(getVideoPreviewPage(fileData.name, videoUrl, downloadUrl, shortCode), {
         headers: { 'Content-Type': 'text/html' }
     });
 }
@@ -760,7 +771,7 @@ async function getAudioPreview(fileData, env, accessToken, shortCode) {
     const audioUrl = `/s/${shortCode}`;
     const downloadUrl = `/s/${shortCode}`;
 
-    return new Response(getAudioPreviewPage(fileData.name, audioUrl, downloadUrl), {
+    return new Response(getAudioPreviewPage(fileData.name, audioUrl, downloadUrl, shortCode), {
         headers: { 'Content-Type': 'text/html' }
     });
 }
@@ -783,10 +794,10 @@ async function getTextPreview(fileData, env, accessToken, shortCode) {
 }
 
 async function getPdfPreview(fileData, env, accessToken, shortCode) {
-    const pdfUrl = `/s/${shortCode}`;
+    const pdfUrl = `/s/${shortCode}?preview=true`;
     const downloadUrl = `/s/${shortCode}`;
 
-    return new Response(getPdfPreviewPage(fileData.name, pdfUrl, downloadUrl), {
+    return new Response(getPdfPreviewPage(fileData.name, pdfUrl, downloadUrl, shortCode), {
         headers: { 'Content-Type': 'text/html' }
     });
 }
@@ -892,7 +903,8 @@ function getTextPreviewPage(fileName, content, isTruncated, shortCode) {
     `;
 }
 
-function getImagePreviewPage(fileName, imageUrl, downloadUrl) {
+// 1. Update preview templates to use ?preview=true
+function getImagePreviewPage(fileName, imageUrl, downloadUrl, shortCode) {
     return `
         <!DOCTYPE html>
         <html lang="en">
@@ -908,7 +920,7 @@ function getImagePreviewPage(fileName, imageUrl, downloadUrl) {
                     <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
                 </div>
                 <div class="flex-1 flex items-center justify-center mb-6">
-                    <img src="${imageUrl}" alt="${fileName}" class="max-w-full max-h-[60vh] object-contain rounded-lg shadow" />
+                    <img src="/s/${shortCode}?preview=true" alt="${fileName}" class="max-w-full max-h-[60vh] object-contain rounded-lg shadow" />
                 </div>
                 <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
                     <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -922,7 +934,7 @@ function getImagePreviewPage(fileName, imageUrl, downloadUrl) {
     `;
 }
 
-function getVideoPreviewPage(fileName, videoUrl, downloadUrl) {
+function getVideoPreviewPage(fileName, videoUrl, downloadUrl, shortCode) {
     return `
         <!DOCTYPE html>
         <html lang="en">
@@ -939,7 +951,7 @@ function getVideoPreviewPage(fileName, videoUrl, downloadUrl) {
                 </div>
                 <div class="flex-1 flex items-center justify-center mb-6">
                     <video controls class="w-full max-h-[60vh] rounded-lg shadow">
-                        <source src="${videoUrl}" type="video/*">
+                        <source src="/s/${shortCode}?preview=true" type="video/*">
                         Your browser does not support the video tag.
                     </video>
                 </div>
@@ -955,7 +967,7 @@ function getVideoPreviewPage(fileName, videoUrl, downloadUrl) {
     `;
 }
 
-function getAudioPreviewPage(fileName, audioUrl, downloadUrl) {
+function getAudioPreviewPage(fileName, audioUrl, downloadUrl, shortCode) {
     return `
         <!DOCTYPE html>
         <html lang="en">
@@ -972,7 +984,7 @@ function getAudioPreviewPage(fileName, audioUrl, downloadUrl) {
                 </div>
                 <div class="flex-1 flex items-center justify-center mb-6">
                     <audio controls class="w-full">
-                        <source src="${audioUrl}" type="audio/*">
+                        <source src="/s/${shortCode}?preview=true" type="audio/*">
                         Your browser does not support the audio tag.
                     </audio>
                 </div>
@@ -988,7 +1000,7 @@ function getAudioPreviewPage(fileName, audioUrl, downloadUrl) {
     `;
 }
 
-function getPdfPreviewPage(fileName, pdfUrl, downloadUrl) {
+function getPdfPreviewPage(fileName, pdfUrl, downloadUrl, shortCode) {
     return `
         <!DOCTYPE html>
         <html lang="en">
@@ -1004,7 +1016,7 @@ function getPdfPreviewPage(fileName, pdfUrl, downloadUrl) {
                     <h1 class="text-2xl font-bold text-gray-800 truncate" title="${fileName}">${fileName}</h1>
                 </div>
                 <div class="flex-1 flex items-center justify-center mb-6">
-                    <iframe src="${pdfUrl}?dl=1" class="w-full h-96 rounded-lg shadow" frameborder="0"></iframe>
+                    <iframe src="/s/${shortCode}?preview=true" class="w-full h-96 rounded-lg shadow" frameborder="0"></iframe>
                 </div>
                 <a href="${downloadUrl}?dl=1" class="block w-full text-center px-4 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors mt-auto">
                     <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
