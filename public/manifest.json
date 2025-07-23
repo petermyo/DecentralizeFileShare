@@ -3,12 +3,12 @@
     "name": "ဒီဖိုင် - Advance File Sharing",
     "icons": [
       {
-        "src": "https://placehold.co/192x192/3B82F6/FFFFFF?text=D",
+        "src": "192x192.png",
         "type": "image/png",
         "sizes": "192x192"
       },
       {
-        "src": "https://placehold.co/512x512/3B82F6/FFFFFF?text=D",
+        "src": "512x512.png",
         "type": "image/png",
         "sizes": "512x512"
       }
