@@ -2,6 +2,8 @@ const CACHE_NAME = 'dfile-cache-v1';
 const urlsToCache = [
   '/',
   '/index.html',
+  '192x192.png',
+  '512x512.png'
   // You can add more assets here like CSS files or logos if you have them
 ];
 
