@@ -299,7 +299,9 @@ async function handleUploadFinalize(request, env) {
 
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify({
             id: fileId,
-            name: fileName,
+            name: originalName, // Use originalName for display on preview page
+            fileName: fileName, // Keep the generated filename for internal use if needed
+            fileSize: fileSize, // Store fileSize
             ownerId: userId,
             passcode: passcode || null,
             expireDate: expireDate || null
@@ -670,14 +672,14 @@ async function handleListUpdate(request, env) {
         const { shortUrl, passcode, expireDate } = await request.json();
         const shortCode = shortUrl.split('/l/')[1];
 
-        const listData = await env.APP_KV.get(`list:${shortCode}`, { type: 'json' });
-        if (!listData || listData.ownerId !== userId) {
+        const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+        if (!fileData || fileData.ownerId !== userId) {
             return new Response(JSON.stringify({ error: "List not found or permission denied." }), { status: 404 });
         }
 
-        listData.passcode = passcode || null;
-        listData.expireDate = expireDate || null;
-        await env.APP_KV.put(`list:${shortCode}`, JSON.stringify(listData));
+        fileData.passcode = passcode || null;
+        fileData.expireDate = expireDate || null;
+        await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
 
         const historyKey = `history:list:${userId}`;
         const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
@@ -929,7 +931,7 @@ function getPreviewPage(fileData, currentUrl) {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Preview: ${fileData.fileName}</title>
+            <title>Preview: ${fileData.name}</title>
             <script src="https://cdn.tailwindcss.com"></script>
             <style>
                 /* Ensure iframe/video/img fit within container */
@@ -942,7 +944,7 @@ function getPreviewPage(fileData, currentUrl) {
             <div class="w-full max-w-4xl p-8 bg-white rounded-lg shadow-xl">
                 <h1 class="text-3xl font-bold text-gray-800 mb-4 text-center">File Preview</h1>
                 <div class="text-center mb-6">
-                    <p class="text-xl font-semibold text-gray-700 break-words">${fileData.fileName}</p>
+                    <p class="text-xl font-semibold text-gray-700 break-words">${fileData.name}</p>
                     <p class="text-gray-600">Size: ${formatBytes(fileData.fileSize)}</p>
                     <p class="text-gray-600">Expires: ${fileData.expireDate || 'Never'}</p>
                     <p class="text-gray-600">Short URL: <a href="${fileData.shortUrl}" class="text-blue-500 hover:underline" target="_blank">${fileData.shortUrl}</a></p>
