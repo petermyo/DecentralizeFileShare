@@ -304,7 +304,8 @@ async function handleUploadFinalize(request, env) {
             fileSize: fileSize, // Store fileSize
             ownerId: userId,
             passcode: passcode || null,
-            expireDate: expireDate || null
+            expireDate: expireDate || null,
+            shortUrl: shortUrl // Store the short URL
         }), { expirationTtl: 60 * 60 * 24 * 30 }); // 30-day expiry
 
         const fileMeta = {
