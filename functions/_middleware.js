@@ -7,6 +7,13 @@
  * This version adds full CRUD functionality for file lists and fixes the
  * public list view rendering.
  *
+ * Additionally, it introduces a file preview page with passcode handling and
+ * inline display for supported media types (images, videos, PDFs).
+ *
+ * URL Prefix Changes:
+ * - Preview: /p/
+ * - Direct Download: /s/
+ * - File List: /l/
  */
 
 // --- Import JWT Library ---
@@ -32,7 +39,7 @@ export const onRequest = async (context) => {
         return handleApiRequest(request, env);
     }
 
-    // Route short URL redirects for individual files
+    // Route short URL redirects for individual files (download)
     if (path.startsWith('/s/')) {
         if (request.method === 'GET') {
             return handleShortUrlGet(request, env);
@@ -41,7 +48,7 @@ export const onRequest = async (context) => {
             return handleShortUrlPost(request, env);
         }
     }
-    
+
     // Route public list views
     if (path.startsWith('/l/')) {
         if (request.method === 'GET') {
@@ -52,6 +59,15 @@ export const onRequest = async (context) => {
         }
     }
 
+    // Route file preview views (new prefix /p/)
+    if (path.startsWith('/p/')) { // Changed from /a/ to /p/
+        if (request.method === 'GET') {
+            return handlePreviewGet(request, env);
+        }
+        if (request.method === 'POST') {
+            return handlePreviewPost(request, env);
+        }
+    }
 
     // For all other requests, pass through to the static asset handler (serves the frontend)
     return next();
@@ -79,7 +95,7 @@ async function handleApiRequest(request, env) {
         case '/api/logout':
             return handleLogout(request);
         case '/api/files':
-             return getFileHistory(request, env);
+            return getFileHistory(request, env);
         case '/api/delete':
             return handleDelete(request, env);
         case '/api/file/update':
@@ -191,8 +207,8 @@ async function handleCallback(request, env) {
         await env.APP_KV.put(loginHistoryKey, JSON.stringify(existingHistory));
 
         if (!env.JWT_SECRET) {
-             console.error('FATAL: JWT_SECRET environment variable is not set.');
-             throw new Error('Server configuration error: JWT secret is missing.');
+            console.error('FATAL: JWT_SECRET environment variable is not set.');
+            throw new Error('Server configuration error: JWT secret is missing.');
         }
 
         const token = await new jose.SignJWT({ userId, userName, picture })
@@ -226,7 +242,7 @@ async function handleUploadInitiate(request, env) {
 
         const accessToken = await getValidAccessToken(tokenData, userId, env);
         const folderId = await findOrCreateFolder(accessToken, env);
-        
+
         const requestOrigin = new URL(request.url).origin;
 
         const uploadSessions = await Promise.all(files.map(async (file) => {
@@ -251,7 +267,7 @@ async function handleUploadInitiate(request, env) {
                 console.error(`Failed to initiate for ${file.fileName}`);
                 return null;
             }
-            
+
             return {
                 originalName: file.fileName,
                 newFileName: newFileName,
@@ -277,9 +293,9 @@ async function handleUploadFinalize(request, env) {
         if (!fileId || !fileName || !originalName) {
             return new Response(JSON.stringify({ error: 'Missing required file data for finalization.' }), { status: 400 });
         }
-        
+
         const shortCode = Math.random().toString(36).substring(2, 8);
-        const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`;
+        const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`; // Still uses /s/ for direct download
 
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify({
             id: fileId,
@@ -287,13 +303,13 @@ async function handleUploadFinalize(request, env) {
             ownerId: userId,
             passcode: passcode || null,
             expireDate: expireDate || null
-        }), { expirationTtl: 60 * 60 * 24 * 30 });
+        }), { expirationTtl: 60 * 60 * 24 * 30 }); // 30-day expiry
 
         const fileMeta = {
             fileId, fileName, originalName, fileSize,
             uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
             hasPasscode: !!passcode,
-            passcode: passcode || null, // FIX: Ensure passcode string is stored for editing
+            passcode: passcode || null,
             expireDate: expireDate || null
         };
         const historyKey = `history:upload:${userId}`;
@@ -323,10 +339,11 @@ async function handleShortUrlGet(request, env) {
     }
 
     if (fileData.passcode) {
-        return new Response(getPasscodePage(shortCode, fileData.name), { headers: { 'Content-Type': 'text/html' } });
+        // Direct download passcode page
+        return new Response(getPasscodePage(shortCode, fileData.name, false, false, false), { headers: { 'Content-Type': 'text/html' } });
     }
 
-    return streamFile(fileData, env);
+    return streamFile(fileData, env, request); // Pass request to streamFile
 }
 
 async function handleShortUrlPost(request, env) {
@@ -341,9 +358,77 @@ async function handleShortUrlPost(request, env) {
     const submittedPasscode = formData.get('passcode');
 
     if (fileData.passcode && submittedPasscode === fileData.passcode) {
-        return streamFile(fileData, env);
+        return streamFile(fileData, env, request); // Pass request to streamFile
     } else {
-        return new Response(getPasscodePage(shortCode, fileData.name, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPasscodePage(shortCode, fileData.name, true, false, false), { status: 401, headers: { 'Content-Type': 'text/html' } });
+    }
+}
+
+async function handlePreviewGet(request, env) {
+    const url = new URL(request.url);
+    const shortCode = url.pathname.split('/p/')[1]; // Changed from /a/ to /p/
+    if (!shortCode) return new Response('Invalid Preview URL', { status: 400 });
+
+    const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+    if (!fileData) return new Response('File not found or expired', { status: 404 });
+
+    if (fileData.expireDate && new Date(fileData.expireDate) < new Date()) {
+        return new Response('This link has expired.', { status: 403 });
+    }
+
+    // Fetch Google Drive file metadata to get mimeType for proper preview rendering
+    const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
+    if (!ownerTokenData) return new Response('File owner token not found.', { status: 500 });
+    const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
+
+    const driveFileMetaRes = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?fields=mimeType`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    if (!driveFileMetaRes.ok) {
+        console.error('Failed to fetch file mimeType from Google Drive:', await driveFileMetaRes.text());
+        return new Response('Could not get file details for preview.', { status: 500 });
+    }
+    const driveFileMeta = await driveFileMetaRes.json();
+    fileData.mimeType = driveFileMeta.mimeType; // Add mimeType to fileData object for preview rendering
+
+    if (fileData.passcode) {
+        // Use a specific passcode page tailored for preview context, action URL uses /p/
+        return new Response(getPasscodePage(shortCode, fileData.name, false, false, true), { headers: { 'Content-Type': 'text/html' } });
+    }
+
+    return new Response(getPreviewPage(fileData, request.url), { headers: { 'Content-Type': 'text/html' } });
+}
+
+async function handlePreviewPost(request, env) {
+    const url = new URL(request.url);
+    const shortCode = url.pathname.split('/p/')[1]; // Changed from /a/ to /p/
+    if (!shortCode) return new Response('Invalid Preview URL', { status: 400 });
+
+    const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+    if (!fileData) return new Response('File not found or expired', { status: 404 });
+
+    const formData = await request.formData();
+    const submittedPasscode = formData.get('passcode');
+
+    if (fileData.passcode && submittedPasscode === fileData.passcode) {
+        // Fetch Google Drive file metadata to get mimeType for proper preview rendering
+        const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
+        if (!ownerTokenData) return new Response('File owner token not found.', { status: 500 });
+        const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
+
+        const driveFileMetaRes = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?fields=mimeType`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (!driveFileMetaRes.ok) {
+            console.error('Failed to fetch file mimeType from Google Drive:', await driveFileMetaRes.text());
+            return new Response('Could not get file details for preview.', { status: 500 });
+        }
+        const driveFileMeta = await driveFileMetaRes.json();
+        fileData.mimeType = driveFileMeta.mimeType; // Add mimeType to fileData object for preview rendering
+
+        return new Response(getPreviewPage(fileData, request.url), { headers: { 'Content-Type': 'text/html' } });
+    } else {
+        return new Response(getPasscodePage(shortCode, fileData.name, true, false, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
 }
 
@@ -428,7 +513,7 @@ async function handleDelete(request, env) {
 }
 
 async function handleFileUpdate(request, env) {
-     try {
+    try {
         const userId = await getAuthenticatedUserId(request, env);
         const { shortUrl, passcode, expireDate } = await request.json();
         const shortCode = shortUrl.split('/s/')[1];
@@ -437,12 +522,12 @@ async function handleFileUpdate(request, env) {
         if (!fileData || fileData.ownerId !== userId) {
             return new Response(JSON.stringify({ error: "File not found or permission denied." }), { status: 404 });
         }
-        
+
         fileData.passcode = passcode || null;
         fileData.expireDate = expireDate || null;
-        
+
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
-        
+
         const historyKey = `history:upload:${userId}`;
         const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
         const updatedHistory = fileHistory.map(file => {
@@ -454,7 +539,7 @@ async function handleFileUpdate(request, env) {
         await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
 
         return new Response(JSON.stringify({ success: true }), { status: 200 });
-    } catch(err) {
+    } catch (err) {
         if (err instanceof Response) return err;
         return new Response(JSON.stringify({ error: 'Failed to update file.' }), { status: 500 });
     }
@@ -471,7 +556,7 @@ async function handleListCreate(request, env) {
 
         const historyKey = `history:upload:${userId}`;
         const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
-        
+
         const listFiles = fileHistory.filter(file => fileIds.includes(file.fileId));
         if (listFiles.length !== fileIds.length) {
             return new Response(JSON.stringify({ error: "Some selected files were not found or you do not have permission." }), { status: 403 });
@@ -494,20 +579,20 @@ async function handleListCreate(request, env) {
             shortUrl: listShortUrl,
             fileCount: listFiles.length,
             createdAt: new Date().toISOString(),
-            passcode: passcode || null, // FIX: Store the actual passcode, not a boolean
+            passcode: passcode || null,
             expireDate: expireDate || null
         });
         await env.APP_KV.put(listHistoryKey, JSON.stringify(existingListHistory));
-        
+
         return new Response(JSON.stringify({ success: true, shortUrl: listShortUrl }), { status: 200 });
-    } catch(err) {
-         if (err instanceof Response) return err;
+    } catch (err) {
+        if (err instanceof Response) return err;
         return new Response(JSON.stringify({ error: 'Failed to create list.' }), { status: 500 });
     }
 }
 
 async function getLists(request, env) {
-     try {
+    try {
         const userId = await getAuthenticatedUserId(request, env);
         const historyKey = `history:list:${userId}`;
         const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
@@ -529,9 +614,9 @@ async function handlePublicListGet(request, env) {
     if (listData.expireDate && new Date(listData.expireDate) < new Date()) {
         return new Response('This list has expired.', { status: 403 });
     }
-    
+
     if (listData.passcode) {
-        return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, false, true), { headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, false, true, false), { headers: { 'Content-Type': 'text/html' } });
     }
 
     const filesInList = listData.files || [];
@@ -551,9 +636,9 @@ async function handlePublicListPost(request, env) {
 
     if (listData.passcode && submittedPasscode === listData.passcode) {
         const filesInList = listData.files || [];
-        return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' });
     } else {
-        return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, true, true), { status: 401, headers: { 'Content-Type': 'text/html' } });
+        return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, true, true, false), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
 }
 
@@ -604,7 +689,7 @@ async function handleListUpdate(request, env) {
             return list;
         });
         await env.APP_KV.put(historyKey, JSON.stringify(updatedHistory));
-        
+
         return new Response(JSON.stringify({ success: true }), { status: 200 });
     } catch (err) {
         if (err instanceof Response) return err;
@@ -658,13 +743,24 @@ async function findOrCreateFolder(accessToken, env) {
     return newFolder.id;
 }
 
-async function streamFile(fileData, env) {
+async function streamFile(fileData, env, request) {
     try {
         const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
         if (!ownerTokenData) throw new Error("File owner's token not found.");
 
         const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
-        
+
+        // Get actual MIME type from Google Drive for accurate Content-Type header
+        const driveFileMetaRes = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?fields=mimeType`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        if (!driveFileMetaRes.ok) {
+            console.error('Failed to fetch file mimeType from Google Drive:', await driveFileMetaRes.text());
+            throw new Error('Could not get file details from Google Drive.');
+        }
+        const driveFileMeta = await driveFileMetaRes.json();
+        const mimeType = driveFileMeta.mimeType || 'application/octet-stream';
+
         const driveResponse = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?alt=media`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
@@ -674,9 +770,16 @@ async function streamFile(fileData, env) {
         }
 
         const headers = new Headers();
-        headers.set('Content-Type', 'application/octet-stream');
-        headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
+        headers.set('Content-Type', mimeType);
         headers.set('Content-Length', driveResponse.headers.get('Content-Length'));
+
+        const url = new URL(request.url);
+        const isInlineRequest = url.searchParams.get('inline') === 'true';
+
+        // Only add Content-Disposition: attachment if it's not an inline preview request
+        if (!isInlineRequest) {
+            headers.set('Content-Disposition', `attachment; filename="${fileData.name}"`);
+        }
 
         return new Response(driveResponse.body, { headers });
     } catch (err) {
@@ -685,8 +788,12 @@ async function streamFile(fileData, env) {
     }
 }
 
-function getPasscodePage(shortCode, fileName, hasError = false, isList = false) {
-    const actionUrl = isList ? `/l/${shortCode}` : `/s/${shortCode}`;
+function getPasscodePage(shortCode, fileName, hasError = false, isList = false, isForPreview = false) {
+    // Determine the action URL based on whether it's a list, a preview, or a direct download
+    const actionUrl = isList ? `/l/${shortCode}` : (isForPreview ? `/p/${shortCode}` : `/s/${shortCode}`); // Changed /a/ to /p/
+    const pageTitle = isForPreview ? "Preview Passcode Required" : "Passcode Required";
+    const pageDescription = isForPreview ? `This preview is protected. Please enter the passcode for ${fileName}:` : `This content is protected. Please enter the passcode to continue:`;
+
     const errorMessage = hasError ? `<p class="text-red-500 text-sm mb-4">Incorrect passcode. Please try again.</p>` : '';
     return `
         <!DOCTYPE html>
@@ -694,13 +801,13 @@ function getPasscodePage(shortCode, fileName, hasError = false, isList = false) 
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Enter Passcode</title>
+            <title>${pageTitle}</title>
             <script src="https://cdn.tailwindcss.com"></script>
         </head>
         <body class="bg-gray-100 flex items-center justify-center min-h-screen">
             <div class="w-full max-w-md p-8 space-y-6 bg-white rounded-lg shadow-md">
                 <h2 class="text-2xl font-bold text-center text-gray-800">Passcode Required</h2>
-                <p class="text-center text-gray-600">This content is protected. Please enter the passcode to continue:</p>
+                <p class="text-center text-gray-600">${pageDescription}</p>
                 <p class="text-center text-gray-800 font-semibold break-all">${fileName}</p>
                 <form method="POST" action="${actionUrl}">
                     ${errorMessage}
@@ -718,7 +825,7 @@ function getPasscodePage(shortCode, fileName, hasError = false, isList = false) 
 }
 
 function getPublicListPage(files) {
-     const formatBytes = (bytes, decimals = 2) => {
+    const formatBytes = (bytes, decimals = 2) => {
         if (!bytes || bytes === 0) return '0 Bytes';
         const k = 1024;
         const dm = decimals < 0 ? 0 : decimals;
@@ -726,8 +833,8 @@ function getPublicListPage(files) {
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
     }
-     
-     const fileRows = files.map(file => `
+
+    const fileRows = files.map(file => `
         <tr class="border-b border-slate-200">
             <td class="p-4 text-slate-800">
                 <div class="font-medium">${file.fileName}</div>
@@ -771,6 +878,89 @@ function getPublicListPage(files) {
                      Powered by ဒီဖိုင်
                  </footer>
             </div>
+        </body>
+        </html>
+    `;
+}
+
+function getPreviewPage(fileData, currentUrl) {
+    const formatBytes = (bytes, decimals = 2) => {
+        if (!bytes || bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const dm = decimals < 0 ? 0 : decimals;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+
+    const downloadLink = fileData.shortUrl; // Link to the existing /s/ route for actual download
+    const inlineStreamLink = `${fileData.shortUrl}?inline=true`; // Link to /s/ route with inline flag for browser display
+
+    let previewContent = '';
+    const mimeType = fileData.mimeType || ''; // Ensure mimeType is available from fileData
+
+    if (mimeType.startsWith('image/')) {
+        previewContent = `<img src="${inlineStreamLink}" alt="File Preview" class="max-w-full h-auto mx-auto rounded-lg shadow-md max-h-[70vh] object-contain">`;
+    } else if (mimeType.startsWith('video/')) {
+        previewContent = `
+            <video controls class="w-full h-auto rounded-lg shadow-md max-h-[70vh] object-contain">
+                <source src="${inlineStreamLink}" type="${mimeType}">
+                Your browser does not support the video tag.
+            </video>
+        `;
+    } else if (mimeType === 'application/pdf') {
+        previewContent = `
+            <iframe src="${inlineStreamLink}" class="w-full min-h-[70vh] border-0 rounded-lg shadow-md"></iframe>
+            <p class="text-center text-gray-600 mt-4">If the PDF does not display, you can download it directly.</p>
+        `;
+    } else {
+        // For other file types, display a message
+        previewContent = `
+            <div class="text-center p-8 bg-gray-50 rounded-lg shadow-inner">
+                <p class="text-xl font-semibold text-gray-700 mb-4">No preview available for this file type.</p>
+                <p class="text-gray-600">You can still download the file using the button below.</p>
+            </div>
+        `;
+    }
+
+    return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Preview: ${fileData.fileName}</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+            <style>
+                /* Ensure iframe/video/img fit within container */
+                iframe, video, img {
+                    display: block; /* Prevents extra space below elements */
+                }
+            </style>
+        </head>
+        <body class="bg-gray-100 min-h-screen flex flex-col items-center py-10">
+            <div class="w-full max-w-4xl p-8 bg-white rounded-lg shadow-xl">
+                <h1 class="text-3xl font-bold text-gray-800 mb-4 text-center">File Preview</h1>
+                <div class="text-center mb-6">
+                    <p class="text-xl font-semibold text-gray-700 break-words">${fileData.fileName}</p>
+                    <p class="text-gray-600">Size: ${formatBytes(fileData.fileSize)}</p>
+                    <p class="text-gray-600">Expires: ${fileData.expireDate || 'Never'}</p>
+                    <p class="text-gray-600">Short URL: <a href="${fileData.shortUrl}" class="text-blue-500 hover:underline" target="_blank">${fileData.shortUrl}</a></p>
+                </div>
+
+                <div class="mb-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    ${previewContent}
+                </div>
+
+                <div class="text-center">
+                    <a href="${downloadLink}" class="inline-block px-6 py-3 font-bold text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500">
+                        Download File
+                    </a>
+                </div>
+            </div>
+            <footer class="text-center p-6 text-gray-500 text-sm mt-8">
+                 Powered by ဒီဖိုင်
+             </footer>
         </body>
         </html>
     `;
