@@ -295,7 +295,7 @@ async function handleUploadFinalize(request, env) {
         }
 
         const shortCode = Math.random().toString(36).substring(2, 8);
-        const shortUrl = `${new URL(request.url).origin}/s/${shortCode}`; // Still uses /s/ for direct download
+        const shortUrl = `${new URL(request.url).origin}/p/${shortCode}`; // Still uses /s/ for direct download
 
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify({
             id: fileId,
