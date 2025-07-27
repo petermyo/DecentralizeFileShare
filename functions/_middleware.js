@@ -636,7 +636,7 @@ async function handlePublicListPost(request, env) {
 
     if (listData.passcode && submittedPasscode === listData.passcode) {
         const filesInList = listData.files || [];
-        return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' });
+        return new Response(getPublicListPage(filesInList), { headers: { 'Content-Type': 'text/html' } });
     } else {
         return new Response(getPasscodePage(listShortCode, `${listData.files.length} files`, true, true, false), { status: 401, headers: { 'Content-Type': 'text/html' } });
     }
