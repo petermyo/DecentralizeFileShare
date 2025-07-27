@@ -295,7 +295,8 @@ async function handleUploadFinalize(request, env) {
         }
 
         const shortCode = Math.random().toString(36).substring(2, 8);
-        const shortUrl = `${new URL(request.url).origin}/p/${shortCode}`; // Still uses /s/ for direct download
+        const downloadUrl = `${new URL(request.url).origin}/s/${shortCode}`; // Direct download URL
+        const previewUrl = `${new URL(request.url).origin}/p/${shortCode}`; // Preview URL
 
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify({
             id: fileId,
@@ -305,12 +306,16 @@ async function handleUploadFinalize(request, env) {
             ownerId: userId,
             passcode: passcode || null,
             expireDate: expireDate || null,
-            shortUrl: shortUrl // Store the short URL
+            shortUrl: downloadUrl, // Store the direct download URL
+            previewUrl: previewUrl // Store the preview URL
         }), { expirationTtl: 60 * 60 * 24 * 30 }); // 30-day expiry
 
         const fileMeta = {
             fileId, fileName, originalName, fileSize,
-            uploadTimestamp: new Date().toISOString(), shortUrl, owner: userId,
+            uploadTimestamp: new Date().toISOString(),
+            shortUrl: downloadUrl, // For history, keep it as the download URL
+            previewUrl: previewUrl, // Add previewUrl to history meta
+            owner: userId,
             hasPasscode: !!passcode,
             passcode: passcode || null,
             expireDate: expireDate || null
@@ -320,7 +325,8 @@ async function handleUploadFinalize(request, env) {
         existingHistory.push(fileMeta);
         await env.APP_KV.put(historyKey, JSON.stringify(existingHistory));
 
-        return new Response(JSON.stringify({ shortUrl, fileMeta }), { headers: { 'Content-Type': 'application/json' } });
+        // Return the previewUrl as the primary 'shortUrl' in the API response for the frontend
+        return new Response(JSON.stringify({ shortUrl: previewUrl, downloadUrl: downloadUrl, fileMeta }), { headers: { 'Content-Type': 'application/json' } });
     } catch (err) {
         if (err instanceof Response) return err;
         console.error('Upload finalize error:', err.message);
@@ -680,6 +686,7 @@ async function handleListUpdate(request, env) {
 
         fileData.passcode = passcode || null;
         fileData.expireDate = expireDate || null;
+
         await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
 
         const historyKey = `history:list:${userId}`;
@@ -948,7 +955,7 @@ function getPreviewPage(fileData, currentUrl) {
                     <p class="text-xl font-semibold text-gray-700 break-words">${fileData.name}</p>
                     <p class="text-gray-600">Size: ${formatBytes(fileData.fileSize)}</p>
                     <p class="text-gray-600">Expires: ${fileData.expireDate || 'Never'}</p>
-                    <p class="text-gray-600">Short URL: <a href="${fileData.shortUrl}" class="text-blue-500 hover:underline" target="_blank">${fileData.shortUrl}</a></p>
+                    <p class="text-gray-600">Short URL: <a href="${fileData.previewUrl || fileData.shortUrl}" class="text-blue-500 hover:underline" target="_blank">${fileData.previewUrl || fileData.shortUrl}</a></p>
                 </div>
 
                 <div class="mb-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
