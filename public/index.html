@@ -606,7 +606,7 @@
                                 {paginatedFiles.map((file, index) => {
                                     const displayUrl = file.previewUrl || file.shortUrl;
                                     const linkHref = displayUrl; // This will be the URL for the link itself
-                                } return (
+                                }(
 
 
                                     <tr key={file.fileId || index} className={displayUrl === recentUploadUrl ? 'highlight-row' : ''}>
@@ -646,7 +646,7 @@
                         {paginatedFiles.map((file, index) => {
                                     const displayUrl = file.previewUrl || file.shortUrl;
                                     const linkHref = displayUrl; // This will be the URL for the link itself
-                                } return  (
+                                }(
                             const displayUrl = file.previewUrl || file.shortUrl;
                             const linkHref = displayUrl; // This will be the URL for the link itself
                              <div key={file.fileId || index} className={`bg-white p-4 rounded-lg shadow border ${displayUrl === recentUploadUrl ? 'border-sky-300' : 'border-slate-200'}`}>
