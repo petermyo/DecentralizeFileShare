@@ -16,6 +16,10 @@
  * Solution: Add a 'previewAuth=true' flag to the inline stream URL from the preview page,
  * and bypass the passcode check in handleShortUrlGet if this flag is present.
  *
+ * Optimizations:
+ * - For images: Use Google Drive's `thumbnailLink` for faster previews.
+ * - For videos/PDFs: Embed Google Drive's viewer via an iframe to leverage their optimized streaming.
+ *
  * URL Prefix Changes:
  * - Preview: /p/
  * - Direct Download: /s/
@@ -395,20 +399,21 @@ async function handlePreviewGet(request, env) {
         return new Response('This link has expired.', { status: 403 });
     }
 
-    // Fetch Google Drive file metadata to get mimeType for proper preview rendering
+    // Fetch Google Drive file metadata to get mimeType AND thumbnailLink for proper preview rendering
     const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
     if (!ownerTokenData) return new Response('File owner token not found.', { status: 500 });
     const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
 
-    const driveFileMetaRes = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?fields=mimeType`, {
+    const driveFileMetaRes = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?fields=mimeType,thumbnailLink`, { // ADDED thumbnailLink field
         headers: { 'Authorization': `Bearer ${accessToken}` }
     });
     if (!driveFileMetaRes.ok) {
-        console.error('Failed to fetch file mimeType from Google Drive:', await driveFileMetaRes.text());
+        console.error('Failed to fetch file mimeType/thumbnailLink from Google Drive:', await driveFileMetaRes.text());
         return new Response('Could not get file details for preview.', { status: 500 });
     }
     const driveFileMeta = await driveFileMetaRes.json();
     fileData.mimeType = driveFileMeta.mimeType; // Add mimeType to fileData object for preview rendering
+    fileData.thumbnailLink = driveFileMeta.thumbnailLink; // ADDED thumbnailLink to fileData
 
     if (fileData.passcode) {
         // Use a specific passcode page tailored for preview context, action URL uses /p/
@@ -430,20 +435,21 @@ async function handlePreviewPost(request, env) {
     const submittedPasscode = formData.get('passcode');
 
     if (fileData.passcode && submittedPasscode === fileData.passcode) {
-        // Fetch Google Drive file metadata to get mimeType for proper preview rendering
+        // Fetch Google Drive file metadata to get mimeType AND thumbnailLink for proper preview rendering
         const ownerTokenData = await env.APP_KV.get(`user:${fileData.ownerId}`, { type: 'json' });
         if (!ownerTokenData) return new Response('File owner token not found.', { status: 500 });
         const accessToken = await getValidAccessToken(ownerTokenData, fileData.ownerId, env);
 
-        const driveFileMetaRes = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?fields=mimeType`, {
+        const driveFileMetaRes = await fetch(`${GOOGLE_DRIVE_API}/files/${fileData.id}?fields=mimeType,thumbnailLink`, { // ADDED thumbnailLink field
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
         if (!driveFileMetaRes.ok) {
-            console.error('Failed to fetch file mimeType from Google Drive:', await driveFileMetaRes.text());
+            console.error('Failed to fetch file mimeType/thumbnailLink from Google Drive:', await driveFileMetaRes.text());
             return new Response('Could not get file details for preview.', { status: 500 });
         }
         const driveFileMeta = await driveFileMetaRes.json();
         fileData.mimeType = driveFileMeta.mimeType; // Add mimeType to fileData object for preview rendering
+        fileData.thumbnailLink = driveFileMeta.thumbnailLink; // ADDED thumbnailLink to fileData
 
         return new Response(getPreviewPage(fileData, request.url), { headers: { 'Content-Type': 'text/html' } });
     } else {
@@ -916,22 +922,25 @@ function getPreviewPage(fileData, currentUrl) {
     const downloadLink = fileData.shortUrl; // Link to the existing /s/ route for actual download
     // MODIFIED: Add previewAuth=true to signal to handleShortUrlGet that this is an authenticated preview stream
     const inlineStreamLink = `${fileData.shortUrl}?inline=true&previewAuth=true`; 
+    // Google Docs Viewer URL for embedding PDFs and other documents
+    const googleViewerUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(fileData.shortUrl)}&embedded=true`;
 
     let previewContent = '';
     const mimeType = fileData.mimeType || ''; // Ensure mimeType is available from fileData
 
     if (mimeType.startsWith('image/')) {
-        previewContent = `<img src="${inlineStreamLink}" alt="File Preview" class="max-w-full h-auto mx-auto rounded-lg shadow-md max-h-[70vh] object-contain">`;
+        // OPTIMIZATION: Use thumbnailLink for images if available, otherwise stream
+        previewContent = `<img src="${fileData.thumbnailLink || inlineStreamLink}" alt="File Preview" class="max-w-full h-auto mx-auto rounded-lg shadow-md max-h-[70vh] object-contain">`;
     } else if (mimeType.startsWith('video/')) {
+        // OPTIMIZATION: Embed Google Docs Viewer for videos
         previewContent = `
-            <video controls class="w-full h-auto rounded-lg shadow-md max-h-[70vh] object-contain">
-                <source src="${inlineStreamLink}" type="${mimeType}">
-                Your browser does not support the video tag.
-            </video>
+            <iframe src="${googleViewerUrl}" class="w-full min-h-[70vh] border-0 rounded-lg shadow-md" allowfullscreen></iframe>
+            <p class="text-center text-gray-600 mt-4">If the video does not display, you can download it directly.</p>
         `;
     } else if (mimeType === 'application/pdf') {
+        // OPTIMIZATION: Embed Google Docs Viewer for PDFs
         previewContent = `
-            <iframe src="${inlineStreamLink}" class="w-full min-h-[70vh] border-0 rounded-lg shadow-md"></iframe>
+            <iframe src="${googleViewerUrl}" class="w-full min-h-[70vh] border-0 rounded-lg shadow-md"></iframe>
             <p class="text-center text-gray-600 mt-4">If the PDF does not display, you can download it directly.</p>
         `;
     } else {
