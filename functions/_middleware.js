@@ -1006,7 +1006,8 @@ function getPreviewPage(fileData, currentUrl) {
         'text/plain', // .txt
         'text/csv', // .csv
         'text/html', // .html
-        'application/rtf', // .rtf
+        'application/rtf',
+        'application/zip', // .rtf
         // Add more as needed for common document types supported by Google Docs Viewer
     ];
 
