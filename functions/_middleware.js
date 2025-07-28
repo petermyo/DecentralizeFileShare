@@ -8,7 +8,13 @@
  * public list view rendering.
  *
  * Additionally, it introduces a file preview page with passcode handling and
- * inline display for supported media types (images, videos, PDFs).
+ * inline display for supported media types (images, videos, PDFs).\
+ *
+ * Fixes: Passcode with Preview not working.
+ * The issue was that the /s/ route (used for streaming content within the preview)
+ * was re-checking the passcode, causing a loop.
+ * Solution: Add a 'previewAuth=true' flag to the inline stream URL from the preview page,
+ * and bypass the passcode check in handleShortUrlGet if this flag is present.
  *
  * URL Prefix Changes:
  * - Preview: /p/
@@ -347,8 +353,12 @@ async function handleShortUrlGet(request, env) {
         return new Response('This link has expired.', { status: 403 });
     }
 
-    if (fileData.passcode) {
-        // Direct download passcode page
+    // NEW LOGIC: If this is an inline request from a preview page that already authenticated, bypass passcode check
+    const isInlineRequest = url.searchParams.get('inline') === 'true';
+    const isPreviewAuthenticated = url.searchParams.get('previewAuth') === 'true';
+
+    if (fileData.passcode && (!isInlineRequest || !isPreviewAuthenticated)) {
+        // Only show passcode page if it's not an authenticated inline preview request
         return new Response(getPasscodePage(shortCode, fileData.name, false, false, false), { headers: { 'Content-Type': 'text/html' } });
     }
 
@@ -904,7 +914,8 @@ function getPreviewPage(fileData, currentUrl) {
     }
 
     const downloadLink = fileData.shortUrl; // Link to the existing /s/ route for actual download
-    const inlineStreamLink = `${fileData.shortUrl}?inline=true`; // Link to /s/ route with inline flag for browser display
+    // MODIFIED: Add previewAuth=true to signal to handleShortUrlGet that this is an authenticated preview stream
+    const inlineStreamLink = `${fileData.shortUrl}?inline=true&previewAuth=true`; 
 
     let previewContent = '';
     const mimeType = fileData.mimeType || ''; // Ensure mimeType is available from fileData
