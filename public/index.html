@@ -603,11 +603,11 @@
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-slate-200">
-                                {paginatedFiles.map((file, index) => {
+                                {paginatedFiles.map((file, index) => (
+                                {
                                     const displayUrl = file.previewUrl || file.shortUrl;
                                     const linkHref = displayUrl; // This will be the URL for the link itself
-                                }(
-
+                                }
 
                                     <tr key={file.fileId || index} className={displayUrl === recentUploadUrl ? 'highlight-row' : ''}>
                                         <td className="px-6 py-4"><input type="checkbox" checked={selectedFileIds.includes(file.fileId)} onChange={() => handleSelectFile(file.fileId)} className="h-4 w-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500"/></td>
@@ -643,13 +643,12 @@
                         </table>
                     </div>
                     <div className="md:hidden space-y-4 mt-4">
-                        {paginatedFiles.map((file, index) => {
+                        {paginatedFiles.map((file, index) => (
+                                {
                                     const displayUrl = file.previewUrl || file.shortUrl;
                                     const linkHref = displayUrl; // This will be the URL for the link itself
-                                }(
-                            const displayUrl = file.previewUrl || file.shortUrl;
-                            const linkHref = displayUrl; // This will be the URL for the link itself
-                             <div key={file.fileId || index} className={`bg-white p-4 rounded-lg shadow border ${displayUrl === recentUploadUrl ? 'border-sky-300' : 'border-slate-200'}`}>
+                                }                             
+                            <div key={file.fileId || index} className={`bg-white p-4 rounded-lg shadow border ${displayUrl === recentUploadUrl ? 'border-sky-300' : 'border-slate-200'}`}>
                                 <div className="flex items-start space-x-4">
                                     <input type="checkbox" checked={selectedFileIds.includes(file.fileId)} onChange={() => handleSelectFile(file.fileId)} className="mt-1 h-4 w-4 text-sky-600 border-gray-300 rounded focus:ring-sky-500"/>
                                     <div className="flex-1">
