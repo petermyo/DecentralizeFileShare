@@ -21,6 +21,9 @@
  * - For videos: Use native HTML <video> tag for direct streaming.
  * - For PDFs/PSDs/Documents: Embed Google Drive's viewer via an iframe to leverage their optimized streaming.
  *
+ * New Feature:
+ * - Preview column in file lists, showing "No Preview Available: Requires Passcode" for protected files.
+ *
  * URL Prefix Changes:
  * - Preview: /p/
  * - Direct Download: /s/
@@ -583,7 +586,32 @@ async function handleListCreate(request, env) {
         const historyKey = `history:upload:${userId}`;
         const fileHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
 
-        const listFiles = fileHistory.filter(file => fileIds.includes(file.fileId));
+        const listFiles = [];
+        for (const fileId of fileIds) {
+            const fileMeta = fileHistory.find(f => f.fileId === fileId);
+            if (fileMeta) {
+                // Fetch full file data from shorturl KV to get mimeType
+                const shortCode = fileMeta.shortUrl.split('/s/')[1];
+                const fullFileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
+                if (fullFileData) {
+                    listFiles.push({
+                        fileId: fileMeta.fileId,
+                        fileName: fileMeta.fileName,
+                        originalName: fileMeta.originalName,
+                        fileSize: fileMeta.fileSize,
+                        uploadTimestamp: fileMeta.uploadTimestamp,
+                        shortUrl: fileMeta.shortUrl,
+                        previewUrl: fileMeta.previewUrl,
+                        owner: fileMeta.owner,
+                        hasPasscode: fileMeta.hasPasscode,
+                        passcode: fileMeta.passcode,
+                        expireDate: fileMeta.expireDate,
+                        mimeType: fullFileData.mimeType // Add mimeType here
+                    });
+                }
+            }
+        }
+
         if (listFiles.length !== fileIds.length) {
             return new Response(JSON.stringify({ error: "Some selected files were not found or you do not have permission." }), { status: 403 });
         }
@@ -863,17 +891,48 @@ function getPublicListPage(files) {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
     }
 
-    const fileRows = files.map(file => `
-        <tr class="border-b border-slate-200">
-            <td class="p-4 text-slate-800">
-                <div class="font-medium">${file.fileName}</div>
-                <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
-            </td>
-            <td class="p-4 text-center">
-                <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Download</a>
-            </td>
-        </tr>
-    `).join('');
+    const viewerMimeTypes = [
+        'application/pdf',
+        'application/msword', // .doc
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+        'application/vnd.ms-excel', // .xls
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+        'application/vnd.ms-powerpoint', // .ppt
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+        'image/vnd.adobe.photoshop', // .psd
+        'image/tiff', // .tif, .tiff
+        'image/svg+xml', // .svg
+        'text/plain', // .txt
+        'text/csv', // .csv
+        'text/html', // .html
+        'application/rtf', // .rtf
+    ];
+
+    const fileRows = files.map(file => {
+        let previewCellContent;
+        if (file.hasPasscode) {
+            previewCellContent = `<span class="text-sm text-gray-500">No Preview Available: Requires Passcode</span>`;
+        } else if (file.mimeType && (file.mimeType.startsWith('image/') || file.mimeType.startsWith('video/') || viewerMimeTypes.includes(file.mimeType))) {
+            previewCellContent = `<a href="${file.previewUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold text-sm">Preview</a>`;
+        } else {
+            previewCellContent = `<span class="text-sm text-gray-500">No Preview Available</span>`;
+        }
+
+        return `
+            <tr class="border-b border-slate-200">
+                <td class="p-4 text-slate-800">
+                    <div class="font-medium">${file.fileName}</div>
+                    <div class="text-sm text-slate-500">${formatBytes(file.fileSize)} | Expires: ${file.expireDate || 'Never'}</div>
+                </td>
+                <td class="p-4 text-center">
+                    <a href="${file.shortUrl}" target="_blank" class="text-sky-600 hover:underline font-semibold">Download</a>
+                </td>
+                <td class="p-4 text-center">
+                    ${previewCellContent}
+                </td>
+            </tr>
+        `;
+    }).join('');
 
     return `
         <!DOCTYPE html>
@@ -895,6 +954,7 @@ function getPublicListPage(files) {
                                 <tr>
                                     <th class="p-4 font-semibold text-slate-600">File Details</th>
                                     <th class="p-4 font-semibold text-slate-600 text-center">Action</th>
+                                    <th class="p-4 font-semibold text-slate-600 text-center">Preview</th>
                                 </tr>
                             </thead>
                             <tbody>
