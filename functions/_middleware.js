@@ -696,15 +696,17 @@ async function handleListUpdate(request, env) {
         const { shortUrl, passcode, expireDate } = await request.json();
         const shortCode = shortUrl.split('/l/')[1];
 
-        const fileData = await env.APP_KV.get(`shorturl:${shortCode}`, { type: 'json' });
-        if (!fileData || fileData.ownerId !== userId) {
+        // FIX: Change 'shorturl:' to 'list:' when retrieving list data
+        const listData = await env.APP_KV.get(`list:${shortCode}`, { type: 'json' });
+        if (!listData || listData.ownerId !== userId) {
             return new Response(JSON.stringify({ error: "List not found or permission denied." }), { status: 404 });
         }
 
-        fileData.passcode = passcode || null;
-        fileData.expireDate = expireDate || null;
+        listData.passcode = passcode || null;
+        listData.expireDate = expireDate || null;
 
-        await env.APP_KV.put(`shorturl:${shortCode}`, JSON.stringify(fileData));
+        // FIX: Change 'shorturl:' to 'list:' when putting updated list data
+        await env.APP_KV.put(`list:${shortCode}`, JSON.stringify(listData));
 
         const historyKey = `history:list:${userId}`;
         const listHistory = await env.APP_KV.get(historyKey, { type: 'json' }) || [];
