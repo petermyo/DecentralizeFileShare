@@ -18,7 +18,8 @@
  *
  * Optimizations:
  * - For images: Use Google Drive's `thumbnailLink` for faster previews.
- * - For videos/PDFs: Embed Google Drive's viewer via an iframe to leverage their optimized streaming.
+ * - For videos: Use native HTML <video> tag for direct streaming.
+ * - For PDFs/PSDs/Documents: Embed Google Drive's viewer via an iframe to leverage their optimized streaming.
  *
  * URL Prefix Changes:
  * - Preview: /p/
@@ -928,23 +929,45 @@ function getPreviewPage(fileData, currentUrl) {
     let previewContent = '';
     const mimeType = fileData.mimeType || ''; // Ensure mimeType is available from fileData
 
-    if (mimeType.startsWith('image/')) {
-        // OPTIMIZATION: Use thumbnailLink for images if available, otherwise stream
+    // Define MIME types that should use the Google Docs Viewer for better compatibility and optimization
+    const viewerMimeTypes = [
+        'application/pdf',
+        'application/msword', // .doc
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+        'application/vnd.ms-excel', // .xls
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+        'application/vnd.ms-powerpoint', // .ppt
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation', // .pptx
+        'image/vnd.adobe.photoshop', // .psd
+        'image/tiff', // .tif, .tiff
+        'image/svg+xml', // .svg
+        'text/plain', // .txt
+        'text/csv', // .csv
+        'text/html', // .html
+        'application/rtf', // .rtf
+        // Add more as needed for common document types supported by Google Docs Viewer
+    ];
+
+    if (mimeType.startsWith('image/') && !viewerMimeTypes.includes(mimeType)) {
+        // Standard image types (JPEG, PNG, GIF) that can be directly embedded or use thumbnail
         previewContent = `<img src="${fileData.thumbnailLink || inlineStreamLink}" alt="File Preview" class="max-w-full h-auto mx-auto rounded-lg shadow-md max-h-[70vh] object-contain">`;
-    } else if (mimeType.startsWith('video/')) {
-        // OPTIMIZATION: Embed Google Docs Viewer for videos
+    } else if (mimeType.startsWith('video/')) { // NEW: Specific handling for video files
+        previewContent = `
+            <video controls class="w-full h-auto rounded-lg shadow-md max-h-[70vh] object-contain">
+                <source src="${inlineStreamLink}" type="${mimeType}">
+                Your browser does not support the video tag.
+            </video>
+            <p class="text-center text-gray-600 mt-4">If the video does not play, you can download it directly.</p>
+        `;
+    }
+    else if (viewerMimeTypes.includes(mimeType)) {
+        // Use Google Docs Viewer for PDFs, PSDs, and other supported documents
         previewContent = `
             <iframe src="${googleViewerUrl}" class="w-full min-h-[70vh] border-0 rounded-lg shadow-md" allowfullscreen></iframe>
-            <p class="text-center text-gray-600 mt-4">If the video does not display, you can download it directly.</p>
-        `;
-    } else if (mimeType === 'application/pdf') {
-        // OPTIMIZATION: Embed Google Docs Viewer for PDFs
-        previewContent = `
-            <iframe src="${googleViewerUrl}" class="w-full min-h-[70vh] border-0 rounded-lg shadow-md"></iframe>
-            <p class="text-center text-gray-600 mt-4">If the PDF does not display, you can download it directly.</p>
+            <p class="text-center text-gray-600 mt-4">If the preview does not display, you can download it directly.</p>
         `;
     } else {
-        // For other file types, display a message
+        // For other file types not supported by direct embed or Google Viewer
         previewContent = `
             <div class="text-center p-8 bg-gray-50 rounded-lg shadow-inner">
                 <p class="text-xl font-semibold text-gray-700 mb-4">No preview available for this file type.</p>
