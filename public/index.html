@@ -610,7 +610,7 @@
                                     // The linkHref for the displayed URL and copy button
                                     const linkHref = displayUrl; 
                                     // The actual download link should always be file.shortUrl
-                                    const downloadLink = file.shortUrl;
+                                    const downloadLink = displayUrl;
 
                                     return (
                                         <tr key={file.fileId || index} className={displayUrl === recentUploadUrl ? 'highlight-row' : ''}>
@@ -653,7 +653,7 @@
                         {paginatedFiles.map((file, index) => {
                             const displayUrl = file.previewUrl || file.shortUrl; // Prioritize previewUrl
                             const linkHref = displayUrl; // Link to the preview page or direct download
-                            const downloadLink = file.shortUrl; // The actual download link
+                            const downloadLink = displayUrl; // The actual download link
 
                             return (                         
                                 <div key={file.fileId || index} className={`bg-white p-4 rounded-lg shadow border ${displayUrl === recentUploadUrl ? 'border-sky-300' : 'border-slate-200'}`}>
