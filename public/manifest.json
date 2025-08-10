@@ -46,7 +46,7 @@
     }
   ],
   "launch_handler": {
-    "client": "auto"
+    "client_mode": ["navigate-existing", "auto"]
   },
   "serviceworker": {
     "src": "service-worker.js",
