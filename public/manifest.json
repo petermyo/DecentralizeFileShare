@@ -1,11 +1,13 @@
 {
+  "id": "/",  
   "short_name": "ဒီဖိုင်",
   "name": "ဒီဖိုင် - Advance File Sharing",
   "icons": [
     {
       "src": "192x192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any"
     },
     {
       "src": "512x512.png",
@@ -43,5 +45,12 @@
       "type": "image/png"
     }
   ],
+  "launch_handler": {
+    "client": "auto"
+  },
+  "serviceworker": {
+    "src": "service-worker.js",
+    "scope": "/"
+  },  
   "orientation": "any"
 }
