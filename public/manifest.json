@@ -27,12 +27,17 @@
   "lang": "en-US",
   "screenshots": [
     {
-      "src": "screenshot1.png",
+      "src": "Home.png",
       "sizes": "1280x720",
       "type": "image/png"
     },
     {
-      "src": "screenshot2.png",
+      "src": "FileUpload.png",
+      "sizes": "1280x720",
+      "type": "image/png"
+    },
+    {
+      "src": "MyFiles.png",
       "sizes": "1280x720",
       "type": "image/png"
     }
